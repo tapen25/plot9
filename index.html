@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ケイデンス検知デモ</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: "Arial", "Hiragino Sans", sans-serif;
+      margin: 20px;
+      background: #f9f9f9;
+    }
+    h1 {
+      text-align: center;
+    }
+    #container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    #status, #cadence, #musicStatus {
+      font-size: 1.4em;
+      margin: 10px 0;
+      text-align: center;
+    }
+    #musicStatus {
+      font-weight: bold;
+      padding: 8px;
+      border-radius: 8px;
+    }
+    #accChart {
+      width: 100%;
+      height: 300px;
+    }
+    button {
+      display: block;
+      margin: 20px auto;
+      padding: 10px 20px;
+      font-size: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>ケイデンス検知デモ</h1>
+
+    <button id="startButton">計測開始</button>
+
+    <div id="status">状態: ---</div>
+    <div id="cadence">ケイデンス: ---</div>
+    <div id="musicStatus">曲状態: ---</div>
+
+    <canvas id="accChart"></canvas>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
