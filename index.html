@@ -3,157 +3,105 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Nature to Speed (High Sensitivity)</title>
+    <title>Direct Motion BPM</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', sans-serif; background:#111; color:#fff; user-select: none; -webkit-user-select: none; }
-        
-        #bg-layer {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: linear-gradient(to bottom, var(--bg-top, #1a237e), var(--bg-bot, #000));
-            transition: background 1.5s ease;
-            z-index: -1;
+        body {
+            margin: 0; overflow: hidden; font-family: 'Courier New', monospace;
+            background: #111; color: #fff;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100vh;
         }
         
-        .hud {
-            position: absolute; top: 0; left: 0; width: 100%; padding: 20px; box-sizing: border-box;
-            text-align: center; pointer-events: none; z-index: 10;
-        }
-        
-        .stage-indicator {
-            font-size: 3rem; font-weight: 900; letter-spacing: 2px;
-            text-shadow: 0 0 10px rgba(255,255,255,0.5);
-            margin-bottom: 10px; transition: color 0.5s;
-        }
-        
-        .info-row { font-size: 1rem; font-family: monospace; opacity: 0.8; margin-bottom: 5px; }
-        
-        /* プログレスバー */
-        .bar-container {
-            width: 80%; margin: 0 auto; height: 10px; background: rgba(255,255,255,0.2);
-            border-radius: 5px; overflow: hidden; margin-top: 10px;
-        }
-        .bar-fill {
-            height: 100%; width: 0%; background: #00e676; 
-            transition: width 0.1s linear, background 0.5s;
+        #visualizer {
+            position: absolute; width: 300px; height: 300px;
+            border-radius: 50%; border: 2px solid #fff;
+            opacity: 0.5; transform: scale(1);
+            transition: transform 0.1s linear, background-color 0.2s;
+            z-index: 0;
         }
 
-        #startOverlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); z-index: 50;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-        }
+        .hud { z-index: 10; text-align: center; }
+        
+        h1 { margin: 0; font-size: 5rem; font-weight: bold; letter-spacing: -2px; }
+        p { margin: 10px 0 0; color: #aaa; font-size: 1rem; }
+        
+        #bpmDisplay { color: #00ff00; text-shadow: 0 0 20px #00ff00; }
+        
         #playBtn {
-            padding: 20px 40px; font-size: 1.5rem; background: #fff; color: #000;
-            border: none; border-radius: 50px; cursor: pointer; font-weight: bold;
+            margin-top: 30px; padding: 15px 40px; font-size: 1.2rem;
+            background: #fff; color: #000; border: none; border-radius: 30px;
+            cursor: pointer; z-index: 20;
         }
-        .tap-hint {
-            position: absolute; bottom: 50px; width: 100%; text-align: center;
-            font-size: 0.9rem; opacity: 0.6; animation: blink 2s infinite; pointer-events: none;
-        }
-        @keyframes blink { 0%{opacity:0.3} 50%{opacity:0.8} 100%{opacity:0.3} }
     </style>
 </head>
 <body>
 
-    <div id="bg-layer"></div>
+    <div id="visualizer"></div>
 
     <div class="hud">
-        <div class="stage-indicator" id="stageText">STAGE 1</div>
-        <div class="info-row">BPM: <span id="bpmVal">80</span> | Activity: <span id="actVal">0</span>%</div>
-        <div class="info-row" style="font-size:0.8rem">Progress: <span id="scoreVal">0</span> / <span id="nextGoal">300</span></div>
-        <div class="bar-container">
-            <div id="progFill" class="bar-fill"></div>
-        </div>
-    </div>
-
-    <div class="tap-hint">Tap screen to BOOST energy (Debug)</div>
-
-    <div id="startOverlay">
-        <button id="playBtn">START EXPERIENCE</button>
-        <p style="margin-top:20px; color:#ccc; font-size:0.9rem;">(Allow Sensor Permissions)</p>
+        <h1 id="bpmDisplay">60</h1>
+        <p>BPM (Realtime)</p>
+        <p style="font-size:0.8rem; margin-top:5px; opacity:0.6;">Shake Device to Accelerate</p>
+        <button id="playBtn">START</button>
     </div>
 
 <script>
 // ==========================================
-// 1. 設定：めちゃくちゃ甘くした閾値
+// 1. 設定
 // ==========================================
-// ★変更点: 感度を上げる係数
-const SENSITIVITY_MULTIPLIER = 8.0; 
+const MIN_BPM = 60;   // 静止時のテンポ
+const MAX_BPM = 190;  // 激しく振った時の最大テンポ
+const SENSITIVITY = 4.0; // 感度（高いほど少しの揺れでMAXになる）
 
-// ★変更点: ステージアップに必要なエネルギー量を大幅ダウン
-const THRESHOLD_STAGE_2 = 300;  // 前回は1500
-const THRESHOLD_STAGE_3 = 800;  // 前回は3500
-
-// 状態変数
+// 状態管理
 let isPlaying = false;
-let smoothedActivity = 0.0; // 0.0 〜 1.0 (現在の激しさ)
-let totalEnergy = 0;        // 累積エネルギー (RPGの経験値)
-let currentStage = 1;
+let currentActivity = 0; // 0.0 ~ 1.0
 
-// センサー用バッファ
-const BUFFER_SIZE = 20; // 反応を速くするためにバッファも小さく
+// センサー用
+const BUFFER_SIZE = 10; // バッファを小さくして反応速度を上げる
 const motionBuffer = [];
 
 // ==========================================
-// 2. 音楽データ (D Major -> G Major -> Em Emotional)
+// 2. 音源設定 (シンセ & ドラム)
 // ==========================================
-const chordLibrary = {
-    // Basic Chords
-    "DM7": ["D3","F#3","A3","C#4"], "Bm7": ["B2","D3","F#3","A3"],
-    "Em7": ["E3","G3","B3","D4"],   "A7":  ["A2","C#3","E3","G3"],
-    "GM7": ["G3","B3","D4","F#4"],  "F#m7":["F#3","A3","C#4","E4"],
-    "Am7": ["A2","C3","E3","G3"],   "D7":  ["D3","F#3","A3","C4"],
-    // Special
-    "BbM7": ["Bb2","D3","F3","A3"], "EbM7":["Eb3","G3","Bb3","D4"]
-};
+// 疾走感のあるコード進行 (F#m - D - A - E)
+const chords = [
+    { note: ["F#3","A3","C#4"], bass: "F#2" },
+    { note: ["D3","F#3","A3"],  bass: "D2" },
+    { note: ["A3","C#4","E4"],  bass: "A2" },
+    { note: ["E3","G#3","B3"],  bass: "E2" }
+];
 
-// アルペジオ用パターン (音域広め)
-const arpPattern = [0, 1, 2, 3, 2, 1]; // 上がって下がる
-
-// ステージ進行
-const prog1 = ["DM7", "Bm7", "Em7", "A7"]; // 静か
-const prog2 = ["GM7", "A7", "F#m7", "Bm7"]; // 明るい
-const prog3 = ["Em7", "EbM7", "DM7", "DbM7"]; // ★劇的：半音下降クリシェ進行 (エモい)
-
-// ==========================================
-// 3. 音源セットアップ
-// ==========================================
-let synthLead, synthChord, synthBass, drumKick, drumSnare, drumHat;
+let synth, bass, kick, hat;
 
 function setupAudio() {
-    const mainVol = new Tone.Volume(-2).toDestination();
-    const limiter = new Tone.Limiter(-0.5).connect(mainVol);
-    const reverb  = new Tone.Reverb({ decay: 2.5, wet: 0.3 }).connect(limiter);
-
-    // リード: 鋭さをActivityで変える
-    synthLead = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: "triangle" },
-        envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 1 },
-        volume: -5
-    }).connect(reverb);
-
-    // コード: ふわっとした音
-    synthChord = new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: "sine" },
-        envelope: { attack: 0.1, decay: 0.3, sustain: 0.5, release: 1.5 },
-        volume: -8
-    }).connect(reverb);
-
-    // ベース: FMベースで存在感
-    synthBass = new Tone.FMSynth({
-        harmonicity: 1.5, modulationIndex: 5,
-        envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.2 },
-        volume: -2
+    const vol = new Tone.Volume(-4).toDestination();
+    const limiter = new Tone.Limiter(-0.2).connect(vol);
+    
+    // コード用シンセ（歯切れよく）
+    synth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: "sawtooth" },
+        envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.1 },
+        volume: -10
     }).connect(limiter);
 
-    // ドラム
-    drumKick = new Tone.MembraneSynth({ volume: 0 }).connect(limiter);
-    drumSnare = new Tone.NoiseSynth({
-        noise: { type: "white" }, envelope: { attack: 0.001, decay: 0.15, sustain:0 },
-        volume: -8
-    }).connect(reverb); // スネアにはリバーブかける
-    drumHat = new Tone.MetalSynth({
+    // ベース
+    bass = new Tone.MonoSynth({
+        oscillator: { type: "square" },
+        envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.2 },
+        filterEnvelope: { attack: 0.001, decay: 0.2, baseFrequency: 200, octaves: 2.6 },
+        volume: -5
+    }).connect(limiter);
+
+    // キック（リズムの核）
+    kick = new Tone.MembraneSynth({
+        pitchDecay: 0.05, octaves: 4, oscillator: { type: "sine" },
+        volume: 0
+    }).connect(limiter);
+
+    // ハイハット（スピード感を出す）
+    hat = new Tone.MetalSynth({
         frequency: 200, envelope: { attack: 0.001, decay: 0.05, release: 0.01 },
         harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5,
         volume: -15
@@ -161,224 +109,188 @@ function setupAudio() {
 }
 
 // ==========================================
-// 4. メインループ
+// 3. ループ処理 (音の生成)
 // ==========================================
-let tick = 0;
-
 function startLoop() {
-    Tone.Transport.bpm.value = 80;
+    let step = 0;
 
     Tone.Transport.scheduleRepeat((time) => {
-        const act = smoothedActivity; // 0.0 ~ 1.0
-        
-        // --- ステージに応じた進行選択 ---
-        let prog;
-        if(currentStage === 1) prog = prog1;
-        else if(currentStage === 2) prog = prog2;
-        else prog = prog3;
+        // 16分音符ごとの処理
+        const beat = step % 16;
+        const barStep = Math.floor(step / 16) % 4; // 4小節ループ
+        const currentChord = chords[barStep];
 
-        const beat16 = tick % 16;
-        const barIdx = Math.floor(tick / 16) % prog.length;
-        const chordName = prog[barIdx];
-        const notes = chordLibrary[chordName] || chordLibrary["DM7"];
-
-        // --- 1. コード & ベース ---
-        if(beat16 === 0) {
-            synthChord.triggerAttackRelease(notes, "1n", time);
-            synthBass.triggerAttackRelease(notes[0], "4n", time);
-        }
-        // 裏拍ベース (Activityが高い時)
-        if(act > 0.3 && beat16 === 10) {
-            synthBass.triggerAttackRelease(notes[0], "8n", time);
+        // --- 1. キック (4つ打ち: ドン・ドン・ドン・ドン) ---
+        if (beat % 4 === 0) {
+            kick.triggerAttackRelease("C1", "8n", time);
+            
+            // ビジュアル同期（キックの瞬間に円が光る）
+            pulseVisual();
         }
 
-        // --- 2. ドラム (ここをActivityで激変させる) ---
-        
-        // Kick: 常に4つ打ち、ただしActivityが低いと音量下がる
-        if(beat16 % 4 === 0) {
-            // Stage 1の最初はキックなし、動くと鳴り出す
-            if(currentStage > 1 || act > 0.1) {
-                drumKick.triggerAttackRelease("C1", "8n", time, 0.7 + (act * 0.3));
-            }
+        // --- 2. ハイハット (裏拍でチッ・チッ) ---
+        if (beat % 2 !== 0) {
+            hat.triggerAttackRelease("32n", time);
         }
 
-        // Snare: 2拍4拍 (Backbeat)
-        // Stage 1では鳴らない。Stage 2以降、または激しく動いた時
-        if((beat16 === 4 || beat16 === 12)) {
-            if(currentStage >= 2 || act > 0.4) {
-                drumSnare.triggerAttackRelease("8n", time);
-            }
+        // --- 3. コード (裏打ちで刻む: ズッ・チャ・ズッ・チャ) ---
+        if (beat % 4 === 2) {
+            synth.triggerAttackRelease(currentChord.note, "16n", time);
         }
 
-        // HiHat: 16ビートの刻み
-        // actが高いほど細かくなる
-        if(act > 0.2 && beat16 % 2 === 0) { // 8分
-            drumHat.triggerAttackRelease("32n", time, 0.5);
-        }
-        if(act > 0.7 && beat16 % 2 !== 0) { // 16分裏 (激しい時)
-            drumHat.triggerAttackRelease("32n", time, 0.3);
+        // --- 4. ベース (16分で走らせる) ---
+        // パターン: ドッ・ドッ・ドッ・ドッ
+        if (beat % 2 === 0) {
+            bass.triggerAttackRelease(currentChord.bass, "16n", time);
         }
 
-
-        // --- 3. メロディ (Activityが高いときだけ鳴る) ---
-        if(act > 0.1) {
-            playArp(time, notes, beat16, act);
-        }
-
-        tick++;
+        step++;
     }, "16n");
 
     Tone.Transport.start();
 }
 
-function playArp(time, notes, beat16, act) {
-    // 8分音符でアルペジオ
-    if(tick % 2 === 0) {
-        const step = Math.floor(tick/2) % arpPattern.length;
-        const noteIdx = arpPattern[step] % notes.length;
-        // Activityが高いとオクターブ上の音が混ざる
-        const octave = (act > 0.8 && Math.random()>0.5) ? 5 : 4;
-        const note = notes[noteIdx].replace(/\d/, octave);
-        
-        synthLead.triggerAttackRelease(note, "16n", time);
-    }
+// ビジュアル演出
+function pulseVisual() {
+    const v = document.getElementById('visualizer');
+    v.style.transform = `scale(${1.2 + (currentActivity * 0.5)})`;
+    v.style.backgroundColor = `hsl(${120 + (currentActivity * 240)}, 100%, 50%)`; // 緑 -> 赤
+    setTimeout(() => {
+        v.style.transform = 'scale(1)';
+        v.style.backgroundColor = 'transparent';
+    }, 100);
 }
 
 // ==========================================
-// 5. 更新ループ (計算 & UI)
+// 4. メインループ (BPM制御 & センサー)
 // ==========================================
 function update() {
     requestAnimationFrame(update);
-    if(!isPlaying) return;
+    if (!isPlaying) return;
 
-    // --- A. 運動量の計算 ---
-    let rawInput = 0;
-    if(motionBuffer.length > 0) {
-        // 標準偏差
-        const m = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
-        const v = motionBuffer.reduce((a,b)=>a+(b-m)**2,0) / motionBuffer.length;
-        const sd = Math.sqrt(v);
-        // ★ここ重要：感度マルチプライヤー
-        rawInput = Math.min(sd * SENSITIVITY_MULTIPLIER, 1.0);
+    // A. センサー値の平均を取る（ノイズ除去）
+    let raw = 0;
+    if (motionBuffer.length > 0) {
+        // 直近の平均値を取得
+        raw = motionBuffer.reduce((a, b) => a + b, 0) / motionBuffer.length;
     }
     
-    // スムージング (急に止まらないように)
-    smoothedActivity += (rawInput - smoothedActivity) * 0.05;
-    // 下限クランプ (完全停止防止: 0.01くらい残す)
-    if(smoothedActivity < 0.01) smoothedActivity = 0;
+    // B. 感度適用 (0.0 ~ 1.0に正規化)
+    // SENSITIVITY倍して、1.0でキャップする
+    let targetAct = Math.min(raw * SENSITIVITY, 1.0);
 
-    // --- B. 経験値の蓄積 ---
-    // 動いている時だけ加算 (少し甘めに判定 0.1以上)
-    if(smoothedActivity > 0.1) {
-        totalEnergy += smoothedActivity * 2.0; // 加算スピードアップ
-    }
+    // C. スムージング (急激すぎる変化を少し和らげるが、反応は早く)
+    // 0.2 くらいの係数だと「ヌルっ」と追従する感じになる
+    currentActivity += (targetAct - currentActivity) * 0.15;
 
-    // --- C. ステージ判定 ---
-    if(totalEnergy < THRESHOLD_STAGE_2) currentStage = 1;
-    else if(totalEnergy < THRESHOLD_STAGE_3) currentStage = 2;
-    else currentStage = 3;
-
-    // --- D. BPM変化 ---
-    // Stage 1: 80-100, Stage 2: 100-120, Stage 3: 120-140
-    let baseBpm = 80;
-    if(currentStage === 2) baseBpm = 100;
-    if(currentStage === 3) baseBpm = 120;
+    // D. BPMへの変換
+    // 最小60 + (進捗 * 幅)
+    const targetBPM = MIN_BPM + (currentActivity * (MAX_BPM - MIN_BPM));
     
-    // Activityを足す
-    const targetBpm = baseBpm + (smoothedActivity * 20);
-    Tone.Transport.bpm.rampTo(targetBpm, 0.5);
+    // E. Tone.jsへの適用 (rampToで0.1秒かけて変化させる＝ほぼリアルタイム)
+    Tone.Transport.bpm.rampTo(targetBPM, 0.1);
 
-    // --- E. UI反映 ---
-    updateUI();
-}
-
-function updateUI() {
-    // Background Color
-    const bg = document.getElementById('bg-layer');
-    const stageTxt = document.getElementById('stageText');
-    const bar = document.getElementById('progFill');
-    const score = document.getElementById('scoreVal');
-    const next = document.getElementById('nextGoal');
-
-    // 数値表示
-    document.getElementById('bpmVal').innerText = Math.round(Tone.Transport.bpm.value);
-    document.getElementById('actVal').innerText = Math.round(smoothedActivity * 100);
-    score.innerText = Math.floor(totalEnergy);
-
-    // ステージごとの見た目
-    let pct = 0;
-    if(currentStage === 1) {
-        stageTxt.innerText = "STAGE 1: DAWN";
-        stageTxt.style.color = "#82b1ff";
-        bg.style.setProperty('--bg-top', '#1a237e'); // Deep Blue
-        bg.style.setProperty('--bg-bot', '#000000');
-        next.innerText = THRESHOLD_STAGE_2;
-        pct = (totalEnergy / THRESHOLD_STAGE_2) * 100;
-        bar.style.background = "#82b1ff";
-
-    } else if(currentStage === 2) {
-        stageTxt.innerText = "STAGE 2: SUN";
-        stageTxt.style.color = "#ffea00";
-        bg.style.setProperty('--bg-top', '#00bcd4'); // Cyan
-        bg.style.setProperty('--bg-bot', '#0277bd');
-        next.innerText = THRESHOLD_STAGE_3;
-        pct = ((totalEnergy - THRESHOLD_STAGE_2) / (THRESHOLD_STAGE_3 - THRESHOLD_STAGE_2)) * 100;
-        bar.style.background = "#ffea00";
-
-    } else {
-        stageTxt.innerText = "STAGE 3: BLAZE";
-        stageTxt.style.color = "#ff3d00";
-        bg.style.setProperty('--bg-top', '#bf360c'); // Red Orange
-        bg.style.setProperty('--bg-bot', '#3e2723');
-        next.innerText = "MAX";
-        pct = 100;
-        bar.style.background = "#ff3d00";
-    }
-    bar.style.width = Math.min(100, pct) + "%";
+    // F. UI更新
+    const bpmInt = Math.round(Tone.Transport.bpm.value);
+    const bpmDisp = document.getElementById('bpmDisplay');
+    bpmDisp.innerText = bpmInt;
+    
+    // 色を変える (遅い=緑, 速い=赤)
+    // HSL: 120(緑) -> 0(赤)
+    const hue = 120 - (currentActivity * 120);
+    bpmDisp.style.color = `hsl(${hue}, 100%, 60%)`;
+    bpmDisp.style.textShadow = `0 0 20px hsl(${hue}, 100%, 60%)`;
 }
 
 // ==========================================
-// 6. 入力イベント
+// 5. イベントハンドラ
 // ==========================================
 function handleMotion(event) {
-    const g = event.accelerationIncludingGravity;
-    if(!g) return;
-    const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
+    const acc = event.accelerationIncludingGravity;
+    if (!acc) return;
+
+    // 重力成分を除去したいが、簡易的に変化量を見る
+    // ハイパスフィルタ的な処理（前回の値との差分）の方が
+    // 「振った」動作だけを取りやすいが、ここでは絶対値の変動を見る簡易版
+    
+    // X, Y, Z の合成ベクトル
+    // ※ 重力(約9.8)が常にかかるため、それとの差分を簡易計算
+    // 本来は devicemotion の acceleration (重力抜き) を使うのがベストだが
+    // Android/iOS互換性のため IncludingGravity を使い、
+    // 「9.8からのズレ」や「分散」を見ると良い。
+    // 今回は「バッファ内の標準偏差」を使うと"揺れ"だけ抽出できる。
+    
+    const x = acc.x || 0;
+    const y = acc.y || 0;
+    const z = acc.z || 0;
+    const mag = Math.sqrt(x*x + y*y + z*z);
+    
     motionBuffer.push(mag);
     if(motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
 }
 
-// ★クリックで強制ブースト（デバッグ用）
-window.addEventListener('mousedown', () => {
-    if(!isPlaying) return;
-    // クリックするたびに運動したことにする
-    smoothedActivity = 1.0; 
-    totalEnergy += 20; // 一気に経験値ゲット
-});
-window.addEventListener('touchstart', () => {
-    if(!isPlaying) return;
-    smoothedActivity = 1.0;
-    totalEnergy += 20;
-});
+// 標準偏差計算（静止時は0に近くなる）
+function getActivityFromBuffer() {
+    if (motionBuffer.length < 2) return 0;
+    const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
+    const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2, 0) / motionBuffer.length;
+    return Math.sqrt(variance); 
+}
 
-// スタートボタン
-document.getElementById('playBtn').addEventListener('click', async () => {
-    // iOSセンサー許可リクエスト
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try {
-            const s = await DeviceMotionEvent.requestPermission();
-            if(s !== 'granted') alert("センサー許可がないと反応しません（クリックで代用可）");
-        } catch(e) { console.log(e); }
-    }
+// ループ処理の上書き（標準偏差版）
+function update() {
+    requestAnimationFrame(update);
+    if (!isPlaying) return;
+
+    // 標準偏差 = 「どれだけ激しく振られているか」
+    const sd = getActivityFromBuffer();
     
+    // 感度調整
+    let targetAct = Math.min(sd / 5.0, 1.0); // 5.0m/s^2 くらいの揺れでMAX
+
+    // 値を滑らかにする
+    currentActivity += (targetAct - currentActivity) * 0.1;
+
+    // BPM計算
+    const targetBPM = MIN_BPM + (currentActivity * (MAX_BPM - MIN_BPM));
+    Tone.Transport.bpm.rampTo(targetBPM, 0.1);
+
+    // UI
+    const bpmDisp = document.getElementById('bpmDisplay');
+    const bpmInt = Math.round(Tone.Transport.bpm.value);
+    bpmDisp.innerText = bpmInt;
+    
+    const hue = 120 - (currentActivity * 120);
+    bpmDisp.style.color = `hsl(${hue}, 100%, 60%)`;
+    bpmDisp.style.textShadow = `0 0 30px hsl(${hue}, 100%, 40%)`;
+}
+
+
+// 開始ボタン
+document.getElementById('playBtn').addEventListener('click', async () => {
+    // iOS Permission
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        const p = await DeviceMotionEvent.requestPermission();
+        if(p !== 'granted') return alert('モーションセンサーを許可してください');
+    }
+
     window.addEventListener('devicemotion', handleMotion);
     await Tone.start();
     setupAudio();
     startLoop();
     isPlaying = true;
+    document.getElementById('playBtn').style.display = 'none';
     
-    document.getElementById('startOverlay').style.display = 'none';
+    // アニメーションループ開始
     update();
+});
+
+// デバッグ用: 画面タップ連打で加速
+document.addEventListener('mousedown', () => {
+    if(isPlaying) {
+        // 無理やりバッファに大きな値を入れて揺れを偽装
+        for(let i=0; i<5; i++) motionBuffer.push(10 + Math.random()*10);
+    }
 });
 </script>
 </body>
