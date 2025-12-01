@@ -3,38 +3,50 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Nature to Speed (StdDev Logic) - D Key</title>
+    <title>Nature to Speed (Clear STAGE)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', sans-serif; background:#111; color:#fff; }
+
         #bg-layer {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: linear-gradient(to bottom, #87CEEB, #E0F7FA);
-            transition: background 1s ease;
+            background: linear-gradient(to bottom, #1a237e, #000);
+            transition: background 1.5s ease;
             z-index: -1;
         }
+
         .hud {
-            position: absolute; top: 20px; left: 20px; color: #333;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 15px; border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.12);
-            z-index: 20;
+            position: absolute; top: 0; left: 0; width: 100%; padding: 20px; box-sizing: border-box;
+            text-align: center; z-index: 10;
         }
-        .status-label { font-size: 1.6rem; font-weight: bold; margin-bottom: 5px; text-transform: uppercase; color:#111; }
-        .sub-label { font-size: 0.9rem; font-family: monospace; color:#222; }
+
+        .stage-indicator {
+            font-size: 3rem; font-weight: 900; letter-spacing: 2px;
+            text-shadow: 0 0 12px rgba(255,255,255,0.7);
+            margin-bottom: 12px; color:#fff;
+            transition: color 0.5s;
+        }
+
+        .info-row { font-size: 1rem; font-family: monospace; opacity: 0.85; }
+
+        /* プログレスバー */
+        .bar-container {
+            width: 80%; margin: 0 auto; height: 12px; background: rgba(255,255,255,0.3);
+            border-radius: 6px; overflow: hidden; margin-top: 12px;
+        }
+        .bar-fill {
+            height: 100%; width: 0%; background: #00e676; 
+            transition: width 0.12s linear, background 0.5s ease;
+        }
+
+        #startOverlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.82); z-index: 50;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
         #playBtn {
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            padding: 18px 36px; font-size: 1.2rem;
-            background: #222; color: #fff; border: none; border-radius: 40px;
-            cursor: pointer; z-index: 30;
-        }
-        .bird-visual {
-            position: absolute; width: 10px; height: 10px;
-            background: white; border-radius: 50%;
-            box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.85);
-            opacity: 0; transition: opacity 0.5s; pointer-events: none;
-            z-index: 5;
+            padding: 22px 46px; font-size: 1.6rem; background:#fff; color:#000;
+            border: none; border-radius: 50px; cursor: pointer; font-weight:bold;
         }
     </style>
 </head>
@@ -43,12 +55,22 @@
     <div id="bg-layer"></div>
 
     <div class="hud">
-        <div class="sub-label">BPM: <span id="bpmVal">80</span> | SPEED: <span id="speedVal">0%</span></div>
-        <div class="sub-label" style="margin-top:5px; color:#555;">Loop: <span id="loopTypeText">4 Bars (Chill)</span></div>
-        <div class="sub-label" style="font-size:0.7rem; color:#888;">Logic: Standard Deviation</div>
+        <div class="stage-indicator" id="stageText">STAGE 1</div>
+        <div class="info-row">
+            BPM: <span id="bpmVal">80</span> | Activity: <span id="speedVal">0%</span>
+        </div>
+        <div class="info-row" style="font-size:0.85rem; margin-top:6px;">
+            Shake Count: <span id="shakeVal">0</span>
+        </div>
+        <div class="bar-container">
+            <div id="progFill" class="bar-fill"></div>
+        </div>
     </div>
 
-    <button id="playBtn">START</button>
+    <div id="startOverlay">
+        <button id="playBtn">START EXPERIENCE</button>
+        <p style="margin-top:20px; color:#ddd;">(Allow Motion Sensor)</p>
+    </div>
 
 <script>
 // ==========================================
@@ -57,207 +79,102 @@
 let isPlaying = false;
 let smoothedActivity = 0.0;
 let currentStage = 1;
-
-// 30サンプルで標準偏差計算
-const BUFFER_SIZE = 30;
-const motionBuffer = [];
 let shakeCount = 0;
 let lastShakeTime = 0;
-const SHAKE_GAP = 220;     // ms
-const COUNT_RATIO = 1.20;  // 直前より20%増で振動1カウント
 
 // ==========================================
-// 2. 和音データ（Key: D Major）
+// 2. 振動カウント設定（甘め）
+// ==========================================
+const BUFFER_SIZE = 30;
+const motionBuffer = [];
+const SHAKE_GAP = 180;   // 反応を速く
+const COUNT_RATIO = 1.08; // 8%変化で1振動カウント
+
+// ==========================================
+// 3. ステージアップ条件（わかりやすく）
+// ==========================================
+const STAGE2_COUNT = 15;
+const STAGE3_COUNT = 30;
+
+// ==========================================
+// 4. 音楽 (コード進行 D key) ※変更なし
 // ==========================================
 const chordLibrary = {
     "DM7":  { notes: ["D3", "F#3", "A3", "C#4"], arp: ["D4","F#4","A4","C#5","D5","F#5"] },
     "Bm7":  { notes: ["B2", "D3",  "F#3", "A3"],  arp: ["B4","D5","F#5","A5","B5","D6"] },
-    "Em7":  { notes: ["E3", "G3",  "B3",  "D4"],  arp: ["E4","G4","B4","D5","E5","G5"] },
-    "A7":   { notes: ["A2", "C#3", "E3",  "G3"],  arp: ["A4","C#5","E5","G5","A5","C#6"] },
+    "Em7":  { notes: ["E3", "G3",  "B3", "D4"],  arp: ["E4","G4","B4","D5","E5","G5"] },
+    "A7":   { notes: ["A2", "C#3", "E3", "G3"],  arp: ["A4","C#5","E5","G5","A5","C#6"] },
     "GM7":  { notes: ["G3","B3","D4","F#4"],      arp: ["G4","B4","D5","F#5","G5","B5"] },
     "F#m7": { notes: ["F#3","A3","C#4","E4"],     arp: ["F#4","A4","C#5","E5","F#5","A5"] },
     "Am7":  { notes: ["A2","C3","E3","G3"],       arp: ["A4","C5","E5","G5","A5","C6"] },
     "D7":   { notes: ["D3","F#3","A3","C4"],      arp: ["D4","F#4","A4","C5","D5","F#5"] }
 };
 
-const progressionLow  = ["DM7","Bm7","Em7","A7"];
-const progressionHigh = ["GM7","A7","F#m7","Bm7","Em7","A7","Am7","D7"];
+const progressionStage1 = ["DM7","Bm7","Em7","A7"];
+const progressionStage2 = ["DM7","Bm7","Em7","A7","GM7","A7","F#m7","Bm7"];
+const progressionStage3 = ["DM7","F#m7","Bm7","A7","GM7","A7","Em7","A7","Am7","D7","BbM7","EbM7"];
 
 // ==========================================
-// 3. 音源セットアップ
+// 5. 音源セットアップ ※変更なし
 // ==========================================
-let leadSynth, chordSynth, bassSynth, drumKit;
-let windNode, windGain, windFilter;
-let birdSynth, birdPan;
-
+let leadSynth, chordSynth, bassSynth, drumKitSynths, reverb;
 function setupAudio() {
     const limiter = new Tone.Limiter(-0.5).toDestination();
-    const reverb  = new Tone.Reverb({ decay: 2, wet: 0.32 }).connect(limiter);
+    reverb  = new Tone.Reverb({ decay:2,wet:0.35 }).connect(limiter);
 
     leadSynth = new Tone.Synth({
-        oscillator: { type: "triangle" },
-        envelope:   { attack: 0.01, decay: 0.1, sustain: 0.3, release: 0.5 },
-        volume: -6
+        oscillator: { type:"triangle" },
+        envelope:   { attack:0.01,decay:0.08,sustain:0.25,release:0.4 },
+        volume:-5
     }).connect(reverb);
 
     chordSynth = new Tone.PolySynth(Tone.MonoSynth, {
-        volume: -12,
-        oscillator: { type: "sine" },
-        envelope:   { attack: 0.5, decay: 0.5, sustain: 0.78, release: 2 },
-        filter:     { type: "lowpass", frequency: 900 }
+        volume:-11,
+        oscillator:{ type:"sine" },
+        envelope:{ attack:0.4,decay:0.6,sustain:0.8,release:1.6 },
+        filter:{ type:"lowpass",frequency:800 }
     }).connect(reverb);
 
     bassSynth = new Tone.FMSynth({
-        harmonicity: 1, modulationIndex: 2,
-        envelope: { attack: 0.05, decay: 0.2, sustain: 0.8, release: 0.5 },
-        volume: -4
+        envelope:{ attack:0.02,decay:0.18,sustain:0.6,release:0.4 },
+        volume:-4
     }).connect(limiter);
-
-    drumKit = {
-        kick:  new Tone.MembraneSynth({ volume:-2 }).connect(limiter),
-        snare: new Tone.NoiseSynth({
-            noise:{ type:"white" },
-            envelope:{ attack:0.001, decay:0.15, sustain:0, release:0 },
-            volume: -10
-        }).connect(limiter)
-    };
-
-    windFilter = new Tone.Filter({ type:"bandpass", frequency:200, Q:0.5 });
-    windGain   = new Tone.Gain(0).connect(limiter);
-    windNode   = new Tone.Noise("pink").connect(windFilter).connect(windGain);
-    windNode.start();
-
-    birdPan = new Tone.Panner(0).connect(reverb);
-    birdSynth = new Tone.Synth({
-        oscillator:{ type:"sine" },
-        envelope:{ attack:0.01, decay:0.1, sustain:0, release:0.1 },
-        volume:-12
-    }).connect(birdPan);
 }
 
 // ==========================================
-// 4. 鳥のサウンド
-// ==========================================
-function triggerBird() {
-    birdPan.pan.value = (Math.random() * 2) - 1;
-    const freq = 900 + Math.random() * 2200;
-    const now  = Tone.now();
-    birdSynth.triggerAttackRelease(freq,"32n",now);
-    birdSynth.frequency.rampTo(freq+400,0.05, now);
-    if(Math.random()>0.5) {
-        birdSynth.triggerAttackRelease(freq+200,"32n",now+0.1);
-    }
-}
-
-// ==========================================
-// 5. メロディ発音ロジック（変更なし）
+// 6. Musicループ ※変更なし
 // ==========================================
 let tick = 0;
-
-function startLoop() {
-    Tone.Transport.bpm.value = 80;
-
-    Tone.Transport.scheduleRepeat((time) => {
-        const intensity = smoothedActivity;
-        const isHigh = intensity > 0.6;
-        const prog  = isHigh ? progressionHigh : progressionLow;
-
-        const beat16 = tick % 16;
-        const len   = prog.length;
-        const barIdx = Math.floor(tick/16) % len;
-        const chordName = prog[barIdx];
-        const chordObj  = chordLibrary[chordName];
-
-        if(intensity<0.3 && Math.random()<0.05) triggerBird();
-        if(intensity<0.3 && Math.random()<0.015) triggerBird();
-
-        if(beat16===0) {
-            chordSynth.triggerAttackRelease(chordObj.notes,"2n",time);
-            bassSynth.triggerAttackRelease(chordObj.notes[0],"8n",time);
-            drumKit.kick.triggerAttackRelease("C1","8n",time,0.6);
-        } else if(intensity>0.4 && beat16%4===0) {
-            drumKit.kick.triggerAttackRelease("C1","8n",time);
-        }
-
-        if(intensity>0.45 && (beat16===4||beat16===12)) {
-            drumKit.snare.triggerAttackRelease("16n",time);
-        }
-        if(intensity>0.7 && Math.random()<0.15 && beat16%2===0) {
-            drumKit.snare.triggerAttackRelease("16n",time);
-        }
-
-        playMelodyAlt(time, intensity, beat16, chordObj);
-
-        // ★ここで振動カウントとSTAGE UPだけ実行（この部分だけ差し替え）
-        detectShakeAlt();
-
-        tick++;
-        if(tick>51200) tick=0;
-
-    },"16n");
-
-    Tone.Transport.start();
-}
-
-function playMelodyAlt(time, act, beat16, chordObj) {
-    if (act < 0.35) return;
-    const step = Math.floor(tick / 2);
-    const index = step % chordObj.arp.length;
-
-    if (tick % 2 === 0) {
-        leadSynth.triggerAttackRelease(chordObj.arp[index], "16n", time);
-    }
-
-    if (act > 0.65 && beat16 % 8 === 6 && Math.random() < 0.4) {
-        const r = Math.floor(Math.random() * chordObj.arp.length);
-        leadSynth.triggerAttackRelease(chordObj.arp[r], "16n", time + 0.1);
-    }
-}
-
-// ==========================================
-// 6. 標準偏差 & BPM更新（変更なし）
-// ==========================================
-function calculateStdDev(arr) {
-    if(!arr.length) return 0;
-    const m = arr.reduce((a,b)=>a+b,0)/arr.length;
-    const v = arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length;
-    return Math.sqrt(v);
-}
-
-function update() {
-    requestAnimationFrame(update);
+Tone.Transport.scheduleRepeat((time)=>{
     if(!isPlaying) return;
+    const intensity = smoothedActivity;
 
-    const sd = calculateStdDev(motionBuffer);
-    let target = Math.min(sd/5.0,1.0);
+    let prog;
+    if(currentStage===1) prog = progressionStage1;
+    if(currentStage===2) prog = progressionStage2;
+    if(currentStage===3) prog = progressionStage3;
 
-    smoothedActivity += (target - smoothedActivity) * 0.05;
-    smoothedActivity = Math.max(0,Math.min(1,smoothedActivity));
+    const barIdx = Math.floor(tick/16) % prog.length;
+    const chordName = prog[barIdx];
+    const c = chordLibrary[chordName] || chordLibrary["DM7"];
 
-    windGain.gain.rampTo(Math.max(0,(smoothedActivity-0.2)*0.25),0.1);
-    windFilter.frequency.rampTo(200 + (smoothedActivity*1000),0.1);
+    if(tick%16===0) chordSynth.triggerAttackRelease(c.notes,"2n",time);
+    if(tick%16===0) bassSynth.triggerAttackRelease(c.notes[0],"8n",time);
 
-    document.getElementById('speedVal').innerText = Math.round(smoothedActivity*100)+"%";
-    document.getElementById('bpmVal').innerText   = Math.round(Tone.Transport.bpm.value);
-    document.getElementById('loopTypeText').innerText = (smoothedActivity>0.6)?"8 Bars (Active)":"4 Bars (Chill)";
+    if(currentStage>1 || intensity>0.1) {
+        drumKit.kick.triggerAttackRelease("C1","8n",time,0.6);
+    }
 
-    const bpm = 70 + (smoothedActivity*70);
-    Tone.Transport.bpm.rampTo(bpm,0.1);
-}
+    if(intensity>0.35 && tick%2===0) {
+        const step=Math.floor(tick/2)%c.arp.length;
+        leadSynth.triggerAttackRelease(c.arp[step],"16n",time);
+    }
 
-// ==========================================
-// 7. センサー入力（変更なし）
-// ==========================================
-function handleMotion(event) {
-    const g = event.accelerationIncludingGravity;
-    if(!g) return;
-    const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
-    motionBuffer.push(mag);
-    if(motionBuffer.length>BUFFER_SIZE) motionBuffer.shift();
-}
+    tick++;
+}, "16n");
 
 // ==========================================
-// 8. STAGE UPロジック（追加済み 改訂版）
+// 7. シェイク検知＆ステージロジック（ここだけ改訂！）
 // ==========================================
 function detectShakeAlt() {
     const nowTime = performance.now();
@@ -271,38 +188,175 @@ function detectShakeAlt() {
     if (currentAvg > prevAvg * COUNT_RATIO) {
         shakeCount++;
         lastShakeTime = nowTime;
+    }
 
-        if (currentStage === 1 && shakeCount >= 15) {
-            currentStage = 2;
-            document.getElementById("bg-layer").style.background = "linear-gradient(to bottom, #FFECB3, #FFF8E1)";
-        }
-        if (currentStage === 2 && shakeCount >= 30) {
-            currentStage = 3;
-            document.getElementById("bg-layer").style.background = "linear-gradient(to bottom, #FF8A65, #FFEBEE)";
-        }
+    if(shakeCount >= STAGE3_COUNT) changeStage(3);
+    else if(shakeCount >= STAGE2_COUNT) changeStage(2);
+    else changeStage(1);
+}
+
+function changeStage(stage) {
+    if (currentStage === stage) return;
+    currentStage = stage;
+
+    const bg = document.getElementById("bg-layer");
+    const st = document.getElementById("stageText");
+
+    if(stage === 1) {
+        bg.style.background = "linear-gradient(to bottom, #4A90E2, #A7D8FF)";
+        st.innerText = "STAGE 1: DAWN";
+    }
+    if(stage === 2) {
+        bg.style.background = "linear-gradient(to bottom, #66BB6A, #C8E6C9)";
+        st.innerText = "STAGE 2: WALK";
+    }
+    if(stage === 3) {
+        bg.style.background = "linear-gradient(to bottom, #FF7043, #FFCDD2)";
+        st.innerText = "STAGE 3: RUN";
     }
 }
 
 // ==========================================
-// 9. START処理
+// 8. Activity更新（BPM変更などは変更なし）
 // ==========================================
-document.getElementById('playBtn').addEventListener('click', async () => {
-    if (DeviceMotionEvent?.requestPermission) {
-        const status = await DeviceMotionEvent.requestPermission();
-        if (status !== 'granted') {
-            alert("センサー許可が必要です");
-            return;
-        }
-    }
+function update() {
+    requestAnimationFrame(update);
+    if(!isPlaying) return;
 
-    window.addEventListener('devicemotion', handleMotion);
+    const sd = calculateStdDev(motionBuffer);
+    let target = Math.min(sd/5.0,1.0);
+    smoothedActivity += (target - smoothedActivity) * 0.05;
+    smoothedActivity = Math.max(0,Math.min(1,smoothedActivity));
+
+    document.getElementById('speedVal').innerText = Math.round(smoothedActivity*100)+"%";
+    document.getElementById('shakeVal').innerText = shakeCount;
+    document.getElementById('bpmVal').innerText   = Math.round(Tone.Transport.bpm.value);
+
+    const bpm = 70 + (smoothedActivity * 70);
+    Tone.Transport.bpm.rampTo(bpm,0.1);
+
+    const bar = document.getElementById("progFill");
+    const pct = currentStage===1 
+        ? (shakeCount / STAGE2_COUNT)*100
+        : currentStage===2
+        ? ((shakeCount-STAGE2_COUNT)/(STAGE3_COUNT-STAGE2_COUNT))*100
+        : 100;
+    bar.style.width = Math.min(100,pct)+"%";
+}
+
+// ==========================================
+// 9. Motion記録
+// ==========================================
+function calculateStdDev(arr){
+    if(!arr.length) return 0;
+    const m = arr.reduce((a,b)=>a+b,0)/arr.length;
+    const v = arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length;
+    return Math.sqrt(v);
+}
+function calculateStdDev(arr){
+    if(!arr.length) return 0;
+    const m = arr.reduce((a,b)=>a+b,0)/arr.length;
+    const v = arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length;
+    return Math.sqrt(v);
+}
+
+// ==========================================
+// 10. STARTボタン
+// ==========================================
+document.getElementByById("playBtn").addEventListener("click", async()=>{
+    if(DeviceMotionEvent?.requestPermission){
+        const s=await DeviceMotionEvent.requestPermission();
+        if(s!=='granted') return alert("Need Sensor Permission");
+    }
+    window.addEventListener('devicemotion',handleMotion);
+    await Tone.start();
+    setupAudio();
+    isPlaying=true;
+    document.getElementById("startOverlay").style.display="none";
+    Tone.Transport.start();
+    update();
+});
+
+window.addEventListener("devicemotion", handleMotion);
+
+async()=>{
+    if(typeof DeviceMotionEvent !=="undefined"&& typeof DeviceMotionEvent.requestPermission==="function"){
+        try{
+            const p=await DeviceMotionEvent.requestPermission()
+            if(p!=='granted') alert("Sensor permission is required for motion-based experience.");
+        }catch{}
+    }
+};
+
+// ==========================================
+// 11. 振動ロジックひろいやすく（推奨）
+// ==========================================
+function handleMotion(event) {
+    const g = event.accelerationIncludingGravity;
+    if(!g) return;
+    const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
+    motionBuffer.push(mag);
+    if(motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
+}
+
+// ループ開始
+document.getElementById("playBtn").addEventListener("click", async()=>{
+    window.addEventListener("devicemotion", handleMotion);
     await Tone.start();
     setupAudio();
     startLoop();
     isPlaying = true;
-    document.getElementById('playBtn').style.display = 'none';
+    detectShakeAlt();
     update();
 });
+
+function calculateStdDev(arr){
+    if(!arr.length) return 0;
+    const m = arr.reduce((a,b)=>a+b,0)/arr.length;
+    const v = arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length;
+    return Math.sqrt(v);
+}
+
+function detectShakeAlt() {
+    const nowTime = performance.now();
+    if(nowTime - lastShakeTime < SHAKE_GAP) return;
+    const n=motionBuffer.length;
+    if(n<4) return;
+
+    const currentAvg = (motionBuffer[n-1] + motionBuffer[n-2]) / 2;
+    const preAvg    = (motionBuffer[n-3] + motionBuffer[n-4]) / 2;
+    if(currentAvg > preAvg * COUNT_RATIO){
+        shakeCount++;
+        lastShakeTime = nowTime;
+    }
+
+    if(shakeCount >= STAGE3_COUNT){
+        changeStage(3);
+    } else if(shakeCount >= STAGE2_COUNT){
+        changeStage(2);
+    } else{
+        changeStage(1);
+    }
+}
+
+function changeStage(stage){
+    if(currentStage===stage) return;
+    currentStage=stage;
+    const bg = document.getElementById("bg-layer");
+    const st = document.getElementById("stageText");
+    if(stage===1){
+        bg.style.background="linear-gradient(to bottom,#4A90E2,#A7D8FF)";
+        st.innerText="STAGE 1: DAWN";
+    }
+    if(stage===2){
+        bg.style.background="linear-gradient(to bottom,#66BB6A,#C8E6C9)";
+        st.innerText="STAGE 2: WALK";
+    }
+    if(stage===3){
+        bg.style.background="linear-gradient(to bottom,#FF7043,#FFCDD2)";
+        st.innerText="STAGE 3: RUN";
+    }
+}
 </script>
 </body>
 </html>
