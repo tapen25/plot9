@@ -3,22 +3,22 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Nature to Speed (Super Sweet Sensitivity)</title>
+<title>Nature to Speed (15 Shake Stage / Swing BPM)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <style>
     body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', sans-serif; background:#111; color:#fff; user-select:none; -webkit-user-select:none; }
     #bg-layer {
-        position:absolute;top:0;left:0;width:100%;height:100%;
+        position:absolute; top:0; left:0; width:100%; height:100%;
         background:linear-gradient(to bottom,var(--bg-top,#1a237e),var(--bg-bot,#000));
         transition:background 1.5s ease; z-index:-1;
     }
-    .hud { position:absolute;top:0;left:0;width:100%;padding:20px;box-sizing:border-box;text-align:center;pointer-events:none;z-index:10; }
-    .stage-indicator { font-size:3rem;font-weight:900;letter-spacing:2px;text-shadow:0 0 10px rgba(255,255,255,0.5);margin-bottom:10px;transition:color 0.5s; }
-    .info-row { font-size:1rem;font-family:monospace;opacity:0.8;margin-bottom:5px; }
-    .bar-container { width:80%;margin:0 auto;height:10px;background:rgba(255,255,255,0.2);border-radius:5px;overflow:hidden;margin-top:10px; }
-    .bar-fill { height:100%;width:0%;background:#00e676;transition:width 0.1s linear,background 0.5s; }
-    #startOverlay { position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:50;display:flex;flex-direction:column;justify-content:center;align-items:center; }
-    #playBtn { padding:20px 40px;font-size:1.5rem;background:#fff;color:#000;border:none;border-radius:50px;cursor:pointer;font-weight:bold; }
+    .hud { position:absolute; top:0; left:0; width:100%; padding:20px; box-sizing:border-box; text-align:center; pointer-events:none; z-index:10; }
+    .stage-indicator { font-size:3rem; font-weight:900; letter-spacing:2px; text-shadow:0 0 10px rgba(255,255,255,0.5); margin-bottom:10px; transition:color 0.5s; }
+    .info-row { font-size:1rem; font-family:monospace; opacity:0.8; margin-bottom:5px; }
+    .bar-container { width:80%; margin:0 auto; height:10px; background:rgba(255,255,255,0.2); border-radius:5px; overflow:hidden; margin-top:10px; }
+    .bar-fill { height:100%; width:0%; background:#00e676; transition:width 0.1s linear,background 0.5s; }
+    #startOverlay { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:50; display:flex; flex-direction:column; justify-content:center; align-items:center; }
+    #playBtn { padding:20px 40px; font-size:1.5rem; background:#fff; color:#000; border:none; border-radius:50px; cursor:pointer; font-weight:bold; }
 </style>
 </head>
 <body>
@@ -46,82 +46,89 @@ let currentStage = 1;
 let shakeCount = 0;
 
 // センサー用バッファ設定
-const BUFFER_SIZE = 8; // 即反応
+const BUFFER_SIZE = 12;   // 少しだけ平均を安定させる
 const motionBuffer = [];
-let lastPeakTime = 0;
-const PEAK_GAP = 180; // 連続ノイズ防止(ミリ秒)。緩やかに
 
-// 振動検出の閾値（激甘）
-const PEAK_THRESHOLD = 1.02; // 1.0付近 = ほぼ全部OK
+let lastShakeTime = 0;
+const SHAKE_GAP = 220; // 連続カウント防止（ms）。体感とのズレは出にくい
+
+// カウント判定の基準（甘すぎず、でも確実）
+const COUNT_RATIO = 1.15; // 直前より15%以上増加したら1振動とみなす
 
 // =====================
 // 音楽データ
 // =====================
 const chordLibrary = {
-    "DM7":["D3","F#3","A3","C#4"], "Bm7":["B2","D3","F#3","A3"],
-    "Em7":["E3","G3","B3","D4"],  "A7":["A2","C#3","E3","G3"],
-    "GM7":["G3","B3","D4","F#4"], "F#m7":["F#3","A3","C#4","E4"],
-    "BbM7":["Bb2","D3","F3","A3"],"EbM7":["Eb3","G3","Bb3","D4"]
+    "DM7": ["D3","F#3","A3","C#4"], "Bm7": ["B2","D3","F#3","A3"],
+    "Em7": ["E3","G3","B3","D4"],   "A7":  ["A2","C#3","E3","G3"],
+    "GM7": ["G3","B3","D4","F#4"],  "F#m7":["F#3","A3","C#4","E4"],
+    "BbM7": ["Bb2","D3","F3","A3"], "EbM7":["Eb3","G3","Bb3","D4"]
 };
-const arpPattern = [0,1,2,3,2,1];
-const prog1 = ["DM7","Bm7","Em7","A7"];
-const prog2 = ["GM7","A7","F#m7","Bm7"];
-const prog3 = ["Em7","EbM7","DM7","GM7"];
+const arpPattern = [0, 1, 2, 3, 2, 1];
 
-// =====================
-// 音源セットアップ
-// =====================
+const prog1 = ["DM7", "Bm7", "Em7", "A7"];   // 静か
+const prog2 = ["GM7", "A7", "F#m7", "Bm7"];  // 明るい
+const prog3 = ["Em7", "EbM7", "DM7", "GM7"]; // 情熱
+
 let synthLead, synthChord, synthBass, drumKick, drumSnare, drumHat;
 
 function setupAudio() {
     const mainVol = new Tone.Volume(-2).toDestination();
     const limiter = new Tone.Limiter(-0.5).connect(mainVol);
-    const rev     = new Tone.Reverb({decay:2.5,wet:0.3}).connect(limiter);
+    const rev     = new Tone.Reverb({ decay: 2.5, wet: 0.3 }).connect(limiter);
 
-    synthLead = new Tone.PolySynth(Tone.Synth,{oscillator:{type:"triangle"},envelope:{attack:0.01,decay:0.1,sustain:0.1,release:1},volume:-5}).connect(rev);
-    synthChord= new Tone.PolySynth(Tone.Synth,{oscillator:{type:"sine"}, envelope:{attack:0.1,decay:0.3,sustain:0.5,release:1.5},volume:-8}).connect(rev);
-    synthBass = new Tone.FMSynth({harmonicity:1.5,modulationIndex:5,envelope:{attack:0.01,decay:0.2,sustain:0.4,release:0.2},volume:-2}).connect(limiter);
+    synthLead  = new Tone.PolySynth(Tone.Synth, { oscillator:{type:"triangle"}, envelope:{attack:0.01,decay:0.1,sustain:0.1,release:1}, volume:-5 }).connect(rev);
+    synthChord = new Tone.PolySynth(Tone.Synth, { oscillator:{type:"sine"},     envelope:{attack:0.1,decay:0.3,sustain:0.5,release:1.5}, volume:-8 }).connect(rev);
+    synthBass  = new Tone.FMSynth({ harmonicity:1.5,modulationIndex:5,envelope:{attack:0.01,decay:0.2,sustain:0.4,release:0.2}, volume:-2 }).connect(limiter);
 
     drumKick  = new Tone.MembraneSynth({volume:0}).connect(limiter);
-    drumSnare = new Tone.NoiseSynth({noise:{type:"white"},envelope:{attack:0.001,decay:0.15,sustain:0},volume:-8}).connect(rev);
-    drumHat   = new Tone.MetalSynth({frequency:200,envelope:{attack:0.001,decay:0.05,release:0.01},harmonicity:5.1,modulationIndex:32,resonance:4000,octaves:1.5,volume:-15}).connect(limiter);
-}
-
-function playArp(time,notes){
-    if(Tone.Transport.ticks % 2 === 0){
-        const step = Math.floor(Tone.Transport.ticks/2) % arpPattern.length;
-        const i = arpPattern[step] % notes.length;
-        const oct = Math.random()>0.5?4:5;
-        const n = notes[i].replace(/\d/,oct);
-        synthLead.triggerAttackRelease(n,"16n",time);
-    }
+    drumSnare = new Tone.NoiseSynth({ noise:{type:"white"}, envelope:{attack:0.001,decay:0.15,sustain:0}, volume:-8 }).connect(rev);
+    drumHat   = new Tone.MetalSynth({ frequency:200,envelope:{attack:0.001,decay:0.05,release:0.01},harmonicity:5.1,modulationIndex:32,resonance:4000,octaves:1.5,volume:-15 }).connect(limiter);
 }
 
 // =====================
-// メインループ
+// メイン音楽ループ
 // =====================
-let tick=0;
+let tick = 0;
 function startLoop() {
     Tone.Transport.bpm.value = 80;
     Tone.Transport.scheduleRepeat((time)=>{
-        const prog = currentStage===1?prog1:currentStage===2?prog2:prog3;
+        const prog = currentStage === 1 ? prog1 : currentStage === 2 ? prog2 : prog3;
         const beat = tick % 16;
         const barIdx = Math.floor(tick/16) % prog.length;
-        const cName  = prog[barIdx];
-        const notes  = chordLibrary[cName] || ["D3","A3","F#3","C#4"];
+        const chordName = prog[barIdx];
+        const notes = chordLibrary[chordName] ?? ["D3","A3","F#3","C#4"];
 
-        if(beat===0){ synthChord.triggerAttackRelease(notes,"1n",time); synthBass.triggerAttackRelease(notes[0],"4n",time); }
-        if((currentStage>=2||getActivity()>0.3)&&(beat===4||beat===12)){ drumSnare.triggerAttackRelease("8n",time); }
-        if(beat % 4 === 0){ drumKick.triggerAttackRelease("C1","8n",time,0.6); }
-        if(getActivity()>0.2 && beat % 2 === 0){ drumHat.triggerAttackRelease("32n",time,0.5); }
-        if(getActivity()>0.1){ playArp(time,notes); }
+        if(beat === 0) {
+            synthChord.triggerAttackRelease(notes, "1n", time);
+            synthBass.triggerAttackRelease(notes[0], "4n", time);
+        }
+        if((currentStage >= 2 || smoothedActivity > 0.25) && (beat === 4 || beat === 12)) {
+            drumSnare.triggerAttackRelease("8n", time);
+        }
+        if(beat % 4 === 0) {
+            drumKick.triggerAttackRelease("C1","8n", time, 0.6);
+        }
+        if(smoothedActivity > 0.15 && beat % 2 === 0) {
+            drumHat.triggerAttackRelease("32n", time, 0.4);
+        }
+        if(smoothedActivity > 0.1) {
+            playArp(time, notes);
+        }
         tick++;
     },"16n");
     Tone.Transport.start();
 }
 
-// smoothedActivityゲッター
-function getActivity(){ return motionBuffer.length>0?((motionBuffer.reduce((a,b)=>a+b,0)/motionBuffer.length)/12):0; }
+function playArp(time, chordNotes) {
+    if(Tone.Transport.ticks % 2 === 0) {
+        const step = Math.floor(Tone.Transport.ticks/2) % arpPattern.length;
+        const noteIdx = arpPattern[step] % chordNotes.length;
+        const oct = (smoothedActivity > 0.6 && Math.random()>0.5) ? 5 : 4;
+        const note = chordNotes[noteIdx].replace(/\d/, oct);
+        synthLead.triggerAttackRelease(note, "16n", time);
+    }
+}
 
 // =====================
 // センサー入力
@@ -130,54 +137,46 @@ function handleMotion(event) {
     const g = event.accelerationIncludingGravity;
     if(!g) return;
     const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
+
     motionBuffer.push(mag);
     if(motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
 
-    detectShake(mag);
+    detectShake();
 }
 
 // =====================
-// 振動検出（超確実・シンプル）
+// 振動カウント検知（甘すぎず確実版）
 // =====================
-function detectShake(val) {
+function detectShake() {
+    const nowVal  = motionBuffer[motionBuffer.length-1] ?? 0;
+    const prevVal = motionBuffer[motionBuffer.length-2] ?? 0;
     const nowTime = performance.now();
-    
-    // 間隔あけてノイズ連打を抑える (超甘なのでほぼ弾かれない)
-    if(nowTime - lastPeakTime < PEAK_GAP) return;
 
-    // 前の値より増加してたら揺れとみなす（ピークより確実）
-    const prev = motionBuffer.length > 1 ? motionBuffer[motionBuffer.length - 2] : 0;
-    
-    if(val > prev * PEAK_THRESHOLD) {
+    if(nowTime - lastShakeTime < SHAKE_GAP) return;
+
+    if(nowVal > prevVal * COUNT_RATIO) {
         shakeCount++;
-        lastPeakTime = nowTime;
+        lastShakeTime = nowTime;
 
-        // 15回ごとでステージUP
         if(currentStage === 1 && shakeCount >= 15) currentStage = 2;
         if(currentStage === 2 && shakeCount >= 30) currentStage = 3;
     }
 }
 
 // =====================
-// 更新ループ (BPM & UI)
+// Activity/BPM 更新
 // =====================
 let smoothedActivity = 0;
 function update() {
     requestAnimationFrame(update);
     if(!isPlaying) return;
-    
-    // Activityスムージング（甘口）
-    const latest = motionBuffer.length>0?motionBuffer[motionBuffer.length-1]:0;
-    smoothedActivity += ((latest/12) - smoothedActivity) * 0.2;
-    
-    // BPM変化（ここも超甘）
-    const bpmMin = 60;
-    const bpmMax = 200;
-    if(smoothedActivity > 0.05) {
-        const range = bpmMax - bpmMin;
-        const bpm = bpmMin + smoothedActivity * range;
-        Tone.Transport.bpm.rampTo(bpm, 0.15);
-    }
+
+    const avg = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
+    const normalized = avg / 12;
+    smoothedActivity += (normalized - smoothedActivity) * 0.18;
+
+    const bpm = 70 + (smoothedActivity * 70);
+    Tone.Transport.bpm.rampTo(bpm, 0.15);
 
     updateUI();
 }
@@ -185,31 +184,31 @@ function update() {
 function updateUI() {
     const t = document.getElementById("stageText");
     const bar = document.getElementById("progFill");
+
     document.getElementById("bpmVal").innerText   = Math.round(Tone.Transport.bpm.value);
     document.getElementById("shakeVal").innerText = shakeCount;
 
     let pct = 0;
-    if(currentStage===1){ t.innerText="STAGE 1: DAWN"; t.style.color="#82b1ff"; pct=(shakeCount/15)*100; bar.style.background="#82b1ff"; }
-    if(currentStage===2){ t.innerText="STAGE 2: SUN";  t.style.color="#ffea00"; pct=((shakeCount-15)/15)*100; bar.style.background="#ffea00"; }
-    if(currentStage===3){ t.innerText="STAGE 3: BLAZE";t.style.color="#ff3d00"; pct=100; bar.style.background="#ff3d00"; }
-
-    bar.style.width = Math.min(100, Math.max(0,pct)) + "%";
+    if(currentStage===1){t.innerText="STAGE 1: DAWN"; t.style.color="#82b1ff"; pct=(shakeCount/15)*100; bar.style.background="#82b1ff";}
+    if(currentStage===2){t.innerText="STAGE 2: SUN";  t.style.color="#ffea00"; pct=((shakeCount-15)/15)*100; bar.style.background="#ffea00";}
+    if(currentStage===3){t.innerText="STAGE 3: BLAZE";t.style.color="#ff3d00"; pct=100; bar.style.background="#ff3d00";}
+    bar.style.width=Math.min(100,Math.max(0,pct))+"%";
 }
 
 // =====================
 // スタート処理
 // =====================
 document.getElementById("playBtn").addEventListener("click", async ()=>{
-    if(DeviceMotionEvent && DeviceMotionEvent.requestPermission){
-        try { const res = await DeviceMotionEvent.requestPermission(); if(res!=='granted') alert("Sensor Permission Denied"); }
-        catch(e){}
+    if(DeviceMotionEvent && DeviceMotionEvent.requestPermission) {
+        try { const s = await DeviceMotionEvent.requestPermission(); if(s!=='granted') alert("Permission denied"); } catch(e){}
     }
+
     window.addEventListener("devicemotion", handleMotion);
     await Tone.start();
     setupAudio();
     startLoop();
     Tone.Transport.start();
-    isPlaying = true;
+
     isPlaying=true;
     document.getElementById("startOverlay").style.display="none";
     update();
