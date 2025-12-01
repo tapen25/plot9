@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Nature to Speed (Step Vibration Stage)</title>
+<title>Nature to Speed (Super Sweet Sensitivity)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <style>
     body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', sans-serif; background:#111; color:#fff; user-select:none; -webkit-user-select:none; }
@@ -26,8 +26,9 @@
 <div id="bg-layer"></div>
 
 <div class="hud">
-    <div class="stage-indicator" id="stageText">STAGE 1</div>
-    <div class="info-row">BPM: <span id="bpmVal">80</span> | ShakeCount: <span id="shakeVal">0</span></div>
+    <div class="stage-indicator" id="stageText">STAGE 1: DAWN</div>
+    <div class="info-row">🎵 BPM: <span id="bpmVal">80</span></div>
+    <div class="info-row">🚶 ShakeCount: <span id="shakeVal">0</span></div>
     <div class="bar-container"><div id="progFill" class="bar-fill"></div></div>
 </div>
 
@@ -38,120 +39,177 @@
 
 <script>
 // =====================
-// ステージ条件: 15回ごと振動で進む
+// 状態変数
 // =====================
 let isPlaying = false;
 let currentStage = 1;
-let shakeCount = 0; 
-let vibrationCount = 0;
-let lastWasPeak = false;
+let shakeCount = 0;
 
-const PEAK_THRESHOLD = 0.18;
+// センサー用バッファ設定
+const BUFFER_SIZE = 8; // 即反応
+const motionBuffer = [];
+let lastPeakTime = 0;
+const PEAK_GAP = 180; // 連続ノイズ防止(ミリ秒)。緩やかに
+
+// 振動検出の閾値（激甘）
+const PEAK_THRESHOLD = 1.02; // 1.0付近 = ほぼ全部OK
+
+// =====================
+// 音楽データ
+// =====================
 const chordLibrary = {
-    "DM7":["D3","F#3","A3","C#4"],"Bm7":["B2","D3","F#3","A3"],
-    "Em7":["E3","G3","B3","D4"],"A7":["A2","C#3","E3","G3"],
-    "GM7":["G3","B3","D4","F#4"],"F#m7":["F#3","A3","C#4","E4"],
+    "DM7":["D3","F#3","A3","C#4"], "Bm7":["B2","D3","F#3","A3"],
+    "Em7":["E3","G3","B3","D4"],  "A7":["A2","C#3","E3","G3"],
+    "GM7":["G3","B3","D4","F#4"], "F#m7":["F#3","A3","C#4","E4"],
     "BbM7":["Bb2","D3","F3","A3"],"EbM7":["Eb3","G3","Bb3","D4"]
 };
 const arpPattern = [0,1,2,3,2,1];
+const prog1 = ["DM7","Bm7","Em7","A7"];
+const prog2 = ["GM7","A7","F#m7","Bm7"];
+const prog3 = ["Em7","EbM7","DM7","GM7"];
 
+// =====================
+// 音源セットアップ
+// =====================
 let synthLead, synthChord, synthBass, drumKick, drumSnare, drumHat;
 
 function setupAudio() {
-    const mainVol=new Tone.Volume(-2).toDestination();
-    const limiter=new Tone.Limiter(-0.5).connect(mainVol);
-    const rev=new Tone.Reverb({decay:2.5,wet:0.3}).connect(limiter);
+    const mainVol = new Tone.Volume(-2).toDestination();
+    const limiter = new Tone.Limiter(-0.5).connect(mainVol);
+    const rev     = new Tone.Reverb({decay:2.5,wet:0.3}).connect(limiter);
 
-    synthLead=new Tone.PolySynth(Tone.Synth,{oscillator:{type:"triangle"},envelope:{attack:0.01,decay:0.1,sustain:0.1,release:1},volume:-5}).connect(rev);
-    synthChord=new Tone.PolySynth(Tone.Synth,{oscillator:{type:"sine"},envelope:{attack:0.1,decay:0.3,sustain:0.5,release:1.5},volume:-8}).connect(rev);
-    synthBass=new Tone.FMSynth({harmonicity:1.5,modulationIndex:5,envelope:{attack:0.01,decay:0.2,sustain:0.4,release:0.2},volume:-2}).connect(limiter);
-    drumKick=new Tone.MembraneSynth({volume:0}).connect(limiter);
-    drumSnare=new Tone.NoiseSynth({noise:{type:"white"},envelope:{attack:0.001,decay:0.15,sustain:0},volume:-8}).connect(rev);
-    drumHat=new Tone.MetalSynth({frequency:200,envelope:{attack:0.001,decay:0.05,release:0.01},harmonicity:5.1,modulationIndex:32,resonance:4000,octaves:1.5,volume:-15}).connect(limiter);
+    synthLead = new Tone.PolySynth(Tone.Synth,{oscillator:{type:"triangle"},envelope:{attack:0.01,decay:0.1,sustain:0.1,release:1},volume:-5}).connect(rev);
+    synthChord= new Tone.PolySynth(Tone.Synth,{oscillator:{type:"sine"}, envelope:{attack:0.1,decay:0.3,sustain:0.5,release:1.5},volume:-8}).connect(rev);
+    synthBass = new Tone.FMSynth({harmonicity:1.5,modulationIndex:5,envelope:{attack:0.01,decay:0.2,sustain:0.4,release:0.2},volume:-2}).connect(limiter);
+
+    drumKick  = new Tone.MembraneSynth({volume:0}).connect(limiter);
+    drumSnare = new Tone.NoiseSynth({noise:{type:"white"},envelope:{attack:0.001,decay:0.15,sustain:0},volume:-8}).connect(rev);
+    drumHat   = new Tone.MetalSynth({frequency:200,envelope:{attack:0.001,decay:0.05,release:0.01},harmonicity:5.1,modulationIndex:32,resonance:4000,octaves:1.5,volume:-15}).connect(limiter);
 }
 
-let tick=0;
-const prog1=["DM7","Bm7","Em7","A7"];
-const prog2=["GM7","A7","F#m7","Bm7"];
-const prog3=["Em7","EbM7","DM7","GM7"];
+function playArp(time,notes){
+    if(Tone.Transport.ticks % 2 === 0){
+        const step = Math.floor(Tone.Transport.ticks/2) % arpPattern.length;
+        const i = arpPattern[step] % notes.length;
+        const oct = Math.random()>0.5?4:5;
+        const n = notes[i].replace(/\d/,oct);
+        synthLead.triggerAttackRelease(n,"16n",time);
+    }
+}
 
+// =====================
+// メインループ
+// =====================
+let tick=0;
 function startLoop() {
     Tone.Transport.bpm.value = 80;
     Tone.Transport.scheduleRepeat((time)=>{
-        let prog=currentStage===1?prog1:currentStage===2?prog2:prog3;
-        const beat16=tick%16;
-        const barIdx=Math.floor(tick/16)%prog.length;
-        const cName=prog[barIdx];
-        const notes=chordLibrary[cName]||["D3","A3","F#3","C#4"];
+        const prog = currentStage===1?prog1:currentStage===2?prog2:prog3;
+        const beat = tick % 16;
+        const barIdx = Math.floor(tick/16) % prog.length;
+        const cName  = prog[barIdx];
+        const notes  = chordLibrary[cName] || ["D3","A3","F#3","C#4"];
 
-        if(beat16===0){synthChord.triggerAttackRelease(notes,"1n",time);synthBass.triggerAttackRelease(notes[0],"4n",time);}
-        if((currentStage>=2||smoothedActivity>0.3)&&(beat16===4||beat16===12)){drumSnare.triggerAttackRelease("8n",time);}
-        if(beat16%4===0){drumKick.triggerAttackRelease("C1","8n",time,0.7);}
-        if(smoothedActivity>0.2&&beat16%2===0){drumHat.triggerAttackRelease("32n",time,0.5);}
-        if(smoothedActivity>0.1){playArp(time,notes,beat16);}
-
+        if(beat===0){ synthChord.triggerAttackRelease(notes,"1n",time); synthBass.triggerAttackRelease(notes[0],"4n",time); }
+        if((currentStage>=2||getActivity()>0.3)&&(beat===4||beat===12)){ drumSnare.triggerAttackRelease("8n",time); }
+        if(beat % 4 === 0){ drumKick.triggerAttackRelease("C1","8n",time,0.6); }
+        if(getActivity()>0.2 && beat % 2 === 0){ drumHat.triggerAttackRelease("32n",time,0.5); }
+        if(getActivity()>0.1){ playArp(time,notes); }
         tick++;
     },"16n");
     Tone.Transport.start();
 }
 
-function playArp(time,notes){if(tick%2===0){let step=Math.floor(tick/2)%arpPattern.length;let i=arpPattern[step]%notes.length;let oct=Math.random()>0.5?4:5;let n=notes[i].replace(/\d/,oct);synthLead.triggerAttackRelease(n,"16n",time);}}
+// smoothedActivityゲッター
+function getActivity(){ return motionBuffer.length>0?((motionBuffer.reduce((a,b)=>a+b,0)/motionBuffer.length)/12):0; }
 
-let smoothedActivity=0;
-function handleMotion(e){let g=e.accelerationIncludingGravity;if(!g)return;let mag=Math.sqrt((g.x||0)**2+(g.y||0)**2+(g.z||0)**2);let sd=Math.abs(mag-9.81)/9.81;let act=Math.min(sd,1);smoothedActivity+=(act-smoothedActivity)*0.15;}
+// =====================
+// センサー入力
+// =====================
+function handleMotion(event) {
+    const g = event.accelerationIncludingGravity;
+    if(!g) return;
+    const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
+    motionBuffer.push(mag);
+    if(motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
 
-function detectVibration() {
-    const isPeak = (smoothedActivity > PEAK_THRESHOLD);
-
-    if (isPeak && !lastWasPeak) {
-        vibrationCount++;
-        if (vibrationCount > 3) {
-            shakeCount++;
-            vibrationCount = 0;
-            vibrationCount > 3 && (currentStage=2)
-            // ステージアップ処理（15回区切り）
-            if(!isPlaying) return;
-            if(shakeCount === 15 && currentStage === 1) {
-                currentStage = 2;
-            }
-            if(shakeCount === 30 && currentStage === 2) {
-                currentStage = 3;
-            }
-        }
-    }
-    lastWasPeak = isPeak;
+    detectShake(mag);
 }
 
+// =====================
+// 振動検出（超確実・シンプル）
+// =====================
+function detectShake(val) {
+    const nowTime = performance.now();
+    
+    // 間隔あけてノイズ連打を抑える (超甘なのでほぼ弾かれない)
+    if(nowTime - lastPeakTime < PEAK_GAP) return;
+
+    // 前の値より増加してたら揺れとみなす（ピークより確実）
+    const prev = motionBuffer.length > 1 ? motionBuffer[motionBuffer.length - 2] : 0;
+    
+    if(val > prev * PEAK_THRESHOLD) {
+        shakeCount++;
+        lastPeakTime = nowTime;
+
+        // 15回ごとでステージUP
+        if(currentStage === 1 && shakeCount >= 15) currentStage = 2;
+        if(currentStage === 2 && shakeCount >= 30) currentStage = 3;
+    }
+}
+
+// =====================
+// 更新ループ (BPM & UI)
+// =====================
+let smoothedActivity = 0;
 function update() {
     requestAnimationFrame(update);
     if(!isPlaying) return;
-
-    detectVibration();
-    const bpmTarget = 40 + smoothedActivity * 120;
-    Tone.Transport.bpm.rampTo(bpmTarget, 0.2);
+    
+    // Activityスムージング（甘口）
+    const latest = motionBuffer.length>0?motionBuffer[motionBuffer.length-1]:0;
+    smoothedActivity += ((latest/12) - smoothedActivity) * 0.2;
+    
+    // BPM変化（ここも超甘）
+    const bpmMin = 60;
+    const bpmMax = 200;
+    if(smoothedActivity > 0.05) {
+        const range = bpmMax - bpmMin;
+        const bpm = bpmMin + smoothedActivity * range;
+        Tone.Transport.bpm.rampTo(bpm, 0.15);
+    }
 
     updateUI();
 }
 
 function updateUI() {
-    const t=document.getElementById("stageText");
-    const bar=document.getElementById("progFill");
-    document.getElementById("bpmVal").innerText=Math.round(Tone.Transport.bpm.value);
-    document.getElementById("shakeVal").innerText=shakeCount;
+    const t = document.getElementById("stageText");
+    const bar = document.getElementById("progFill");
+    document.getElementById("bpmVal").innerText   = Math.round(Tone.Transport.bpm.value);
+    document.getElementById("shakeVal").innerText = shakeCount;
 
-    let pct=0;
-    if(currentStage===1){t.innerText="STAGE 1: DAWN";t.style.color="#82b1ff";pct=(shakeCount/15)*100;bar.style.background="#82b1ff";}
-    if(currentStage===2){t.innerText="STAGE 2: SUN";t.style.color="#ffea00";pct=((shakeCount-15)/15)*100;bar.style.background="#ffea00";}
-    if(currentStage===3){t.innerText="STAGE 3: BLAZE";t.style.color="#ff3d00";pct=100;bar.style.background="#ff3d00";}
-    bar.style.width=Math.min(100,Math.max(0,pct))+"%";
+    let pct = 0;
+    if(currentStage===1){ t.innerText="STAGE 1: DAWN"; t.style.color="#82b1ff"; pct=(shakeCount/15)*100; bar.style.background="#82b1ff"; }
+    if(currentStage===2){ t.innerText="STAGE 2: SUN";  t.style.color="#ffea00"; pct=((shakeCount-15)/15)*100; bar.style.background="#ffea00"; }
+    if(currentStage===3){ t.innerText="STAGE 3: BLAZE";t.style.color="#ff3d00"; pct=100; bar.style.background="#ff3d00"; }
+
+    bar.style.width = Math.min(100, Math.max(0,pct)) + "%";
 }
 
-document.getElementById("playBtn").addEventListener("click",async()=>{
-    if(DeviceMotionEvent&&DeviceMotionEvent.requestPermission){try{let s=await DeviceMotionEvent.requestPermission();if(s!=='granted')alert("Sensor not allowed");}catch(e){}}
-    window.addEventListener("devicemotion",handleMotion);
+// =====================
+// スタート処理
+// =====================
+document.getElementById("playBtn").addEventListener("click", async ()=>{
+    if(DeviceMotionEvent && DeviceMotionEvent.requestPermission){
+        try { const res = await DeviceMotionEvent.requestPermission(); if(res!=='granted') alert("Sensor Permission Denied"); }
+        catch(e){}
+    }
+    window.addEventListener("devicemotion", handleMotion);
     await Tone.start();
     setupAudio();
     startLoop();
+    Tone.Transport.start();
+    isPlaying = true;
     isPlaying=true;
     document.getElementById("startOverlay").style.display="none";
     update();
