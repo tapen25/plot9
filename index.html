@@ -1,326 +1,155 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Nature to Speed (Fixed)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    <style>
-        body { margin: 0; overflow: hidden; font-family: 'Helvetica Neue', sans-serif; background:#111; color:#fff; }
-
-        #bg-layer {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: linear-gradient(to bottom, #4A90E2, #A7D8FF); /* 初期カラー */
-            transition: background 1.5s ease;
-            z-index: -1;
-        }
-
-        .hud {
-            position: absolute; top: 0; left: 0; width: 100%; padding: 20px; box-sizing: border-box;
-            text-align: center; z-index: 10;
-        }
-
-        .stage-indicator {
-            font-size: 3rem; font-weight: 900; letter-spacing: 2px;
-            text-shadow: 0 0 12px rgba(255,255,255,0.7);
-            margin-bottom: 12px; color:#fff;
-            transition: color 0.5s;
-        }
-
-        .info-row { font-size: 1rem; font-family: monospace; opacity: 0.85; }
-
-        /* プログレスバー */
-        .bar-container {
-            width: 80%; margin: 0 auto; height: 12px; background: rgba(255,255,255,0.3);
-            border-radius: 6px; overflow: hidden; margin-top: 12px;
-        }
-        .bar-fill {
-            height: 100%; width: 0%; background: #00e676; 
-            transition: width 0.12s linear, background 0.5s ease;
-        }
-
-        #startOverlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.82); z-index: 50;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-        }
-        #playBtn {
-            padding: 22px 46px; font-size: 1.6rem; background:#fff; color:#000;
-            border: none; border-radius: 50px; cursor: pointer; font-weight:bold;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Synth Hardbass Interaction</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <style>
+    body { margin: 0; padding: 0; background: #000; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
+    #status { text-align: center; }
+    button { padding: 20px 40px; font-size: 1.2rem; cursor: pointer; background: #ff3333; color: white; border: none; border-radius: 8px; }
+  </style>
 </head>
 <body>
 
-    <div id="bg-layer"></div>
-
-    <div class="hud">
-        <div class="stage-indicator" id="stageText">STAGE 1: DAWN</div>
-        <div class="info-row">
-            BPM: <span id="bpmVal">80</span> | Activity: <span id="speedVal">0%</span>
-        </div>
-        <div class="info-row" style="font-size:0.85rem; margin-top:6px;">
-            Shake Count: <span id="shakeVal">0</span>
-        </div>
-        <div class="bar-container">
-            <div id="progFill" class="bar-fill"></div>
-        </div>
-    </div>
-
-    <div id="startOverlay">
-        <button id="playBtn">START EXPERIENCE</button>
-        <p style="margin-top:20px; color:#ddd;">(Allow Motion Sensor)</p>
-    </div>
+<div id="status">
+  <button id="start-btn">TAP TO START</button>
+  <p id="msg" style="display:none; margin-top:20px;">Device Active<br>Shake to Open Filter</p>
+</div>
 
 <script>
-// ==========================================
-// 1. 状態管理
-// ==========================================
-let isPlaying = false;
-let smoothedActivity = 0.0;
-let currentStage = 1;
-let shakeCount = 0;
-let lastShakeTime = 0;
+  // 音響オブジェクト
+  let kick, bass, hihat;
+  let lowPass;
+  let loop;
+  
+  // 状態管理
+  let isPlaying = false;
+  let currentEnergy = 0; // 0.0 〜 1.0 (音の明るさ)
+  let targetEnergy = 0;
+  
+  // ★調整パラメータ
+  const BPM = 160;        // ロシアンビートの速度
+  const SMOOTHING = 0.05; // 変化の追従遅れ（小さいほどゆっくり）
+  const DECAY = 0.01;     // 放っておくと音がこもっていく速さ
 
-// ==========================================
-// 2. 振動カウント設定（甘め）
-// ==========================================
-const BUFFER_SIZE = 30;
-const motionBuffer = [];
-const SHAKE_GAP = 180;   // 連続カウント防止の間隔(ms)
-const COUNT_RATIO = 1.08; // 前の平均より8%大きければカウント
-
-// ==========================================
-// 3. ステージアップ条件
-// ==========================================
-const STAGE2_COUNT = 15;
-const STAGE3_COUNT = 30;
-
-// ==========================================
-// 4. 音楽 (コード進行)
-// ==========================================
-const chordLibrary = {
-    "DM7":  { notes: ["D3", "F#3", "A3", "C#4"], arp: ["D4","F#4","A4","C#5","D5","F#5"] },
-    "Bm7":  { notes: ["B2", "D3",  "F#3", "A3"],  arp: ["B4","D5","F#5","A5","B5","D6"] },
-    "Em7":  { notes: ["E3", "G3",  "B3", "D4"],   arp: ["E4","G4","B4","D5","E5","G5"] },
-    "A7":   { notes: ["A2", "C#3", "E3", "G3"],   arp: ["A4","C#5","E5","G5","A5","C#6"] },
-    "GM7":  { notes: ["G3","B3","D4","F#4"],      arp: ["G4","B4","D5","F#5","G5","B5"] },
-    "F#m7": { notes: ["F#3","A3","C#4","E4"],     arp: ["F#4","A4","C#5","E5","F#5","A5"] },
-    "Am7":  { notes: ["A2","C3","E3","G3"],       arp: ["A4","C5","E5","G5","A5","C6"] },
-    "D7":   { notes: ["D3","F#3","A3","C4"],      arp: ["D4","F#4","A4","C5","D5","F#5"] },
-    "BbM7": { notes: ["Bb2","D3","F3","A3"],      arp: ["Bb4","D5","F5","A5","Bb5","D6"] },
-    "EbM7": { notes: ["Eb3","G3","Bb3","D4"],     arp: ["Eb4","G4","Bb4","D5","Eb5","G5"] }
-};
-
-const progressionStage1 = ["DM7","Bm7","Em7","A7"];
-const progressionStage2 = ["DM7","Bm7","Em7","A7","GM7","A7","F#m7","Bm7"];
-const progressionStage3 = ["DM7","F#m7","Bm7","A7","GM7","A7","Em7","A7","Am7","D7","BbM7","EbM7"];
-
-// ==========================================
-// 5. 音源セットアップ
-// ==========================================
-let leadSynth, chordSynth, bassSynth, drumKit, reverb;
-
-function setupAudio() {
-    const limiter = new Tone.Limiter(-0.5).toDestination();
-    reverb  = new Tone.Reverb({ decay:2, wet:0.35 }).connect(limiter);
-
-    leadSynth = new Tone.Synth({
-        oscillator: { type:"triangle" },
-        envelope:   { attack:0.01,decay:0.08,sustain:0.25,release:0.4 },
-        volume:-5
-    }).connect(reverb);
-
-    chordSynth = new Tone.PolySynth(Tone.MonoSynth, {
-        volume:-11,
-        oscillator:{ type:"sine" },
-        envelope:{ attack:0.4,decay:0.6,sustain:0.8,release:1.6 },
-        filter:{ type:"lowpass",frequency:800 }
-    }).connect(reverb);
-
-    bassSynth = new Tone.FMSynth({
-        envelope:{ attack:0.02,decay:0.18,sustain:0.6,release:0.4 },
-        volume:-4
-    }).connect(limiter);
-
-    // ★修正: ドラムキットを定義
-    drumKit = {
-        kick: new Tone.MembraneSynth({
-            envelope: {sustain: 0, attack: 0.02, decay: 0.8},
-            volume: -2
-        }).connect(limiter)
-    };
-}
-
-// ==========================================
-// 6. Musicループ
-// ==========================================
-let tick = 0;
-Tone.Transport.scheduleRepeat((time)=>{
-    if(!isPlaying) return;
-    const intensity = smoothedActivity;
-
-    let prog;
-    if(currentStage===1) prog = progressionStage1;
-    if(currentStage===2) prog = progressionStage2;
-    if(currentStage===3) prog = progressionStage3;
-
-    const barIdx = Math.floor(tick/16) % prog.length;
-    const chordName = prog[barIdx];
-    const c = chordLibrary[chordName] || chordLibrary["DM7"];
-
-    // コードとベース
-    if(tick%16===0) chordSynth.triggerAttackRelease(c.notes,"2n",time);
-    if(tick%16===0) bassSynth.triggerAttackRelease(c.notes[0],"8n",time);
-
-    // ドラム (ステージ2以降、または動きが激しいとき)
-    if(currentStage>1 || intensity>0.1) {
-        if(tick%4===0) {
-            drumKit.kick.triggerAttackRelease("C1","8n",time);
-        }
-    }
-
-    // リードメロディ (動きが激しいとき)
-    if(intensity>0.35 && tick%2===0) {
-        const step = Math.floor(tick/2) % c.arp.length;
-        leadSynth.triggerAttackRelease(c.arp[step],"16n",time);
-    }
-
-    tick++;
-}, "16n");
-
-// ==========================================
-// 7. シェイク検知＆ステージロジック
-// ==========================================
-function handleMotion(event) {
-    const g = event.accelerationIncludingGravity;
-    if(!g) return;
-    const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
-    motionBuffer.push(mag);
-    if(motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
-}
-
-function detectShakeAlt() {
-    const nowTime = performance.now();
-    // 一定時間経過していないとカウントしない
-    if (nowTime - lastShakeTime < SHAKE_GAP) return;
+  function setup() {
+    noCanvas(); // 画面描画キャンバスは作らない
     
-    const n = motionBuffer.length;
-    if (n < 4) return;
-
-    const currentAvg = (motionBuffer[n-1] + motionBuffer[n-2]) / 2;
-    const prevAvg    = (motionBuffer[n-3] + motionBuffer[n-4]) / 2;
-
-    // 前より勢いが増していればシェイクとみなす
-    if (currentAvg > prevAvg * COUNT_RATIO) {
-        shakeCount++;
-        lastShakeTime = nowTime;
-    }
-
-    // ステージ変更判定
-    if(shakeCount >= STAGE3_COUNT) changeStage(3);
-    else if(shakeCount >= STAGE2_COUNT) changeStage(2);
-    else changeStage(1);
-}
-
-function changeStage(stage) {
-    if (currentStage === stage) return;
-    currentStage = stage;
-
-    const bg = document.getElementById("bg-layer");
-    const st = document.getElementById("stageText");
-
-    if(stage === 1) {
-        bg.style.background = "linear-gradient(to bottom, #4A90E2, #A7D8FF)";
-        st.innerText = "STAGE 1: DAWN";
-    }
-    if(stage === 2) {
-        bg.style.background = "linear-gradient(to bottom, #66BB6A, #C8E6C9)";
-        st.innerText = "STAGE 2: WALK";
-    }
-    if(stage === 3) {
-        bg.style.background = "linear-gradient(to bottom, #FF7043, #FFCDD2)";
-        st.innerText = "STAGE 3: RUN";
-    }
-}
-
-function calculateStdDev(arr){
-    if(!arr.length) return 0;
-    const m = arr.reduce((a,b)=>a+b,0)/arr.length;
-    const v = arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length;
-    return Math.sqrt(v);
-}
-
-// ==========================================
-// 8. ループ & 更新処理
-// ==========================================
-function update() {
-    requestAnimationFrame(update);
-    if(!isPlaying) return;
-
-    // シェイク判定を常に行う
-    detectShakeAlt();
-
-    // 動きの「激しさ(intensity)」を計算
-    const sd = calculateStdDev(motionBuffer);
-    let target = Math.min(sd/5.0, 1.0);
-    smoothedActivity += (target - smoothedActivity) * 0.05;
-    smoothedActivity = Math.max(0, Math.min(1, smoothedActivity));
-
-    // UI更新
-    document.getElementById('speedVal').innerText = Math.round(smoothedActivity*100)+"%";
-    document.getElementById('shakeVal').innerText = shakeCount;
-    document.getElementById('bpmVal').innerText   = Math.round(Tone.Transport.bpm.value);
-
-    // BPM変化
-    const bpm = 70 + (smoothedActivity * 70); // 70〜140 BPM
-    Tone.Transport.bpm.rampTo(bpm, 0.1);
-
-    // バー更新
-    const bar = document.getElementById("progFill");
-    let pct = 0;
-    if(currentStage===1) {
-        pct = (shakeCount / STAGE2_COUNT) * 100;
-    } else if(currentStage===2) {
-        pct = ((shakeCount - STAGE2_COUNT) / (STAGE3_COUNT - STAGE2_COUNT)) * 100;
-    } else {
-        pct = 100;
-    }
-    bar.style.width = Math.min(100, Math.max(0, pct)) + "%";
-}
-
-// ==========================================
-// 9. スタートボタン (初期化)
-// ==========================================
-document.getElementById("playBtn").addEventListener("click", async () => {
+    // --- 1. シンセサイザーの音作り (Tone.js) ---
     
-    // iOS 13+ の加速度センサー許可リクエスト
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try {
-            const response = await DeviceMotionEvent.requestPermission();
-            if (response !== 'granted') {
-                alert("Motion sensor permission is required.");
-                return;
-            }
-        } catch (e) {
-            console.error(e);
-        }
-    }
+    // 全体の出口にかけるフィルター（これがユーザー操作で動く）
+    lowPass = new Tone.Filter(200, "lowpass").toDestination();
 
-    // Audio開始
-    await Tone.start();
-    setupAudio();
-    
-    // イベントリスナー開始
-    window.addEventListener('devicemotion', handleMotion);
-    
-    // ループ開始
-    isPlaying = true;
-    document.getElementById("startOverlay").style.display = "none";
+    // (A) キック（重低音）
+    kick = new Tone.MembraneSynth({
+      pitchDecay: 0.05,
+      octaves: 10,
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 }
+    }).connect(lowPass);
+
+    // (B) ドンクベース（Hardbass特有の金属的なベース音）
+    // FMシンセシスを使って硬い音を作ります
+    bass = new Tone.FMSynth({
+      harmonicity: 3,       // 倍音成分
+      modulationIndex: 10,  // 金属感の強さ
+      detune: 0,
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 },
+      modulation: { type: "square" },
+      modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.03, release: 0.5 }
+    }).connect(lowPass);
+
+    // (C) ハイハット（リズムを刻む高音）
+    hihat = new Tone.MetalSynth({
+      frequency: 200, envelope: { attack: 0.001, decay: 0.05, release: 0.05 },
+      harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5
+    }).connect(lowPass);
+
+    // --- 2. 演奏パターンの作成 ---
+    // 1小節分のループを作成
+    loop = new Tone.Loop(time => {
+      // 4つ打ちキック (ドン・ドン・ドン・ドン)
+      kick.triggerAttackRelease("C1", "8n", time);
+      kick.triggerAttackRelease("C1", "8n", time + Tone.Time("4n"));
+      kick.triggerAttackRelease("C1", "8n", time + Tone.Time("2n"));
+      kick.triggerAttackRelease("C1", "8n", time + Tone.Time("2n") + Tone.Time("4n"));
+
+      // 裏打ちベース (ンッ・ンッ・ンッ・ンッ)
+      // "Donk" Bass sound
+      bass.triggerAttackRelease("C2", "8n", time + Tone.Time("8n"));
+      bass.triggerAttackRelease("C2", "8n", time + Tone.Time("4n") + Tone.Time("8n"));
+      bass.triggerAttackRelease("C2", "8n", time + Tone.Time("2n") + Tone.Time("8n"));
+      bass.triggerAttackRelease("C2", "8n", time + Tone.Time("2n") + Tone.Time("4n") + Tone.Time("8n"));
+
+      // ハイハット（エネルギーが高い時だけ聞こえるように音量はフィルター依存だが、演奏は常にする）
+      hihat.triggerAttackRelease(32, time + Tone.Time("8n"), 0.5); // 裏打ち
+      
+    }, "1m").start(0);
+
+    Tone.Transport.bpm.value = BPM;
+
+    // --- 3. 開始ボタン処理 ---
+    const btn = document.getElementById('start-btn');
+    btn.addEventListener('click', async () => {
+      await Tone.start();
+      
+      // 加速度センサー許可（iOS用）
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission().then(res => {
+          if (res === 'granted') startMusic();
+        }).catch(console.error);
+      } else {
+        startMusic();
+      }
+    });
+  }
+
+  function startMusic() {
     Tone.Transport.start();
-    update();
-});
+    isPlaying = true;
+    document.getElementById('start-btn').style.display = 'none';
+    document.getElementById('msg').style.display = 'block';
+  }
 
+  function draw() {
+    // 画面描画はしないが、p5.jsのループ機能を使ってセンサー値を監視し続ける
+    if (!isPlaying) return;
+
+    // --- 入力と平滑化（Input & Smoothing） ---
+    
+    // 加速度の合計（揺れ幅）
+    let shake = abs(accelerationX) + abs(accelerationY) + abs(accelerationZ);
+    // PCデバッグ用（マウスX位置）
+    if (shake === 0) shake = (mouseX / width) * 50;
+
+    // 入力レベルの決定
+    let inputLevel = 0;
+    if (shake > 20) inputLevel = 1.0;      // 激しい
+    else if (shake > 5) inputLevel = 0.4;  // 少し
+
+    // 徐々に変化させる (Lerp)
+    if (inputLevel > 0) {
+      targetEnergy = inputLevel;
+      currentEnergy = lerp(currentEnergy, targetEnergy, SMOOTHING);
+    } else {
+      // 入力がない時は徐々に下がる
+      currentEnergy = lerp(currentEnergy, 0, DECAY);
+    }
+
+    // --- 音への適用（Mapping） ---
+    // フィルターの周波数を操作（ここがリアクション）
+    // 200Hz（モコモコ） 〜 5000Hz（クリアで激しい）
+    // 指数的に変化させたほうが聴覚上自然
+    let freq = map(currentEnergy, 0, 1, 200, 5000);
+    
+    // フィルターに適用（rampToでさらに滑らかに）
+    lowPass.frequency.rampTo(freq, 0.1);
+  }
 </script>
+
 </body>
 </html>
