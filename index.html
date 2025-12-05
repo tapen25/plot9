@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>StdDev Hardbass</title>
+    <title>Dynamic Hardbass</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         body {
@@ -15,8 +15,9 @@
         #playBtn {
             padding: 20px 40px; font-size: 1.2rem; cursor: pointer;
             background: #ff3333; color: white; border: none; border-radius: 8px;
+            box-shadow: 0 0 15px #ff0000;
         }
-        #debug { margin-top: 20px; font-family: monospace; color: #aaa; }
+        #debug { margin-top: 20px; font-family: monospace; color: #aaa; text-align: center; }
     </style>
 </head>
 <body>
@@ -25,15 +26,13 @@
 <div id="debug">Waiting for start...</div>
 
 <script>
-    // --- ユーザー提示のコードロジック ---
+    // --- ユーザー提示の標準偏差ロジック ---
     let isPlaying = false;
-    let smoothedActivity = 0.0; // 徐々に変化する値 (0.0 - 1.0)
+    let smoothedActivity = 0.0;
 
-    // 30サンプル（約0.5秒分）で標準偏差を取る
     const BUFFER_SIZE = 30;
     const motionBuffer = [];
 
-    // 6. Activity（標準偏差）計算
     function calculateStdDev(arr) {
         if(!arr.length) return 0;
         const m = arr.reduce((a,b)=>a+b,0)/arr.length;
@@ -41,32 +40,32 @@
         return Math.sqrt(v);
     }
 
-    // 7. センサー入力
     function handleMotion(event) {
         const g = event.accelerationIncludingGravity;
         if(!g) return;
-        // ベクトル長（重力込みの大きさ）
         const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
-        
         motionBuffer.push(mag);
         if(motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
     }
 
     // --- Tone.js 音響設定 ---
-    let lowPass, kick, bass, hihat;
+    let lowPass;
+    let kick, bass, hihat;
 
     function setupAudio() {
-        // マスターフィルター（これが変化する）
-        lowPass = new Tone.Filter(200, "lowpass").toDestination();
+        // ★修正点1: フィルターの初期値をさらに低く（50Hz）して、静止時はほぼ無音に近くする
+        lowPass = new Tone.Filter(50, "lowpass").toDestination();
 
-        // (A) キック
+        // (A) キック（常にリズムをキープする心臓部）
         kick = new Tone.MembraneSynth({
+            volume: 0, // 基本音量
             pitchDecay: 0.05, octaves: 10, oscillator: { type: "sine" },
             envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 }
         }).connect(lowPass);
 
-        // (B) ドンクベース (Hardbass sound)
+        // (B) ドンクベース（激しさの象徴）
         bass = new Tone.FMSynth({
+            volume: -10, // ★初期状態は少し音量を下げておく
             harmonicity: 3, modulationIndex: 10, detune: 0,
             oscillator: { type: "sine" },
             envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 },
@@ -74,32 +73,32 @@
             modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.03, release: 0.5 }
         }).connect(lowPass);
 
-        // (C) ハイハット
+        // (C) ハイハット（スピード感の正体）
+        // ★初期状態はボリュームを -Infinity (無音) にする
         hihat = new Tone.MetalSynth({
+            volume: -60, 
             frequency: 200, envelope: { attack: 0.001, decay: 0.05, release: 0.05 },
             harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5
         }).connect(lowPass);
 
-        // BPM設定
-        Tone.Transport.bpm.value = 160;
+        Tone.Transport.bpm.value = 160; 
     }
 
     function startLoop() {
-        // ループ再生
         new Tone.Loop(time => {
-            // 4つ打ちキック
+            // キック (4つ打ち)
             kick.triggerAttackRelease("C1", "8n", time);
             kick.triggerAttackRelease("C1", "8n", time + Tone.Time("4n"));
             kick.triggerAttackRelease("C1", "8n", time + Tone.Time("2n"));
             kick.triggerAttackRelease("C1", "8n", time + Tone.Time("2n") + Tone.Time("4n"));
 
-            // 裏打ちベース
+            // ベース (裏打ち)
             bass.triggerAttackRelease("C2", "8n", time + Tone.Time("8n"));
             bass.triggerAttackRelease("C2", "8n", time + Tone.Time("4n") + Tone.Time("8n"));
             bass.triggerAttackRelease("C2", "8n", time + Tone.Time("2n") + Tone.Time("8n"));
             bass.triggerAttackRelease("C2", "8n", time + Tone.Time("2n") + Tone.Time("4n") + Tone.Time("8n"));
 
-            // ハイハット (常に刻む)
+            // ハイハット (裏打ち)
             hihat.triggerAttackRelease(32, time + Tone.Time("8n"), 0.1); 
             hihat.triggerAttackRelease(32, time + Tone.Time("4n") + Tone.Time("8n"), 0.1); 
             hihat.triggerAttackRelease(32, time + Tone.Time("2n") + Tone.Time("8n"), 0.1); 
@@ -110,62 +109,63 @@
         Tone.Transport.start();
     }
 
-    // --- メインループ (Visualなし・計算と音制御のみ) ---
+    // --- メインループ ---
     function update() {
         if(!isPlaying) return;
 
-        // 1. 標準偏差の計算（現在の動きの激しさ）
         const stdDev = calculateStdDev(motionBuffer);
-
-        // 2. 正規化（Normalization）
-        // stdDevは静止時=0.01程度、激しい時=5.0〜10.0くらいになる想定
-        // 8.0あたりをMAXとして 0.0〜1.0 に丸める
+        // 感度調整（この数字を小さくすると少しの動きでMAXになる）
         let targetActivity = Math.min(stdDev / 8.0, 1.0);
 
-        // 3. 平滑化（Smoothing）先生のアドバイス対応
-        // 現在値に目標値の5%ずつ近づく（ゆっくり変化）
+        // 平滑化（徐々に変化）
         smoothedActivity += (targetActivity - smoothedActivity) * 0.05;
 
-        // 4. 音響パラメータへの適用
-        // フィルター周波数: 200Hz(こもる) 〜 5000Hz(激しい)
-        // 指数関数的にマッピング（聴覚上自然にするため）
-        const freq = 200 * Math.pow(25, smoothedActivity); 
+        // --- ★音の変化ロジック（ここを修正）---
         
-        if(lowPass) {
-            lowPass.frequency.rampTo(freq, 0.1);
+        // 1. フィルター（音の明るさ）
+        // 静止時 50Hz(ほぼ無音) 〜 最大 5000Hz(クリア)
+        // 指数カーブを使って、動き出しはゆっくり明るくなるように
+        const freq = 50 * Math.pow(100, smoothedActivity); 
+        if(lowPass) lowPass.frequency.rampTo(freq, 0.1);
+
+        // 2. 音量バランス（ミックス）の動的変更
+        if(hihat && bass) {
+            // ハイハット: 静止時は無音(-Infinity) 〜 動くと聞こえる(0dB)
+            // Activityが 0.3 を超えたあたりから急に聞こえ始める設定
+            let hihatVol = -60 + (smoothedActivity * 60); 
+            if(hihatVol < -60) hihatVol = -Infinity;
+            hihat.volume.rampTo(hihatVol, 0.1);
+
+            // ベース: 静止時は控えめ(-20dB) 〜 動くと全開(0dB)
+            let bassVol = -20 + (smoothedActivity * 20);
+            bass.volume.rampTo(bassVol, 0.1);
         }
 
-        // デバッグ表示（数値確認用）
-        document.getElementById('debug').innerText = 
-            `StdDev: ${stdDev.toFixed(2)}\nActivity: ${(smoothedActivity*100).toFixed(0)}%`;
+        // デバッグ表示
+        document.getElementById('debug').innerHTML = 
+            `Motion: ${stdDev.toFixed(2)}<br>` +
+            `Energy: <span style="color:rgb(${smoothedActivity*255},50,50)">${(smoothedActivity*100).toFixed(0)}%</span>`;
 
         requestAnimationFrame(update);
     }
 
-    // --- イベントリスナー ---
+    // --- 開始処理 ---
     document.getElementById('playBtn').addEventListener('click', async () => {
-        // iOSセンサー許可リクエスト
         if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
             try {
                 const s = await DeviceMotionEvent.requestPermission();
                 if(s !== 'granted') return alert("センサー許可が必要です");
-            } catch(e) {
-                console.error(e);
-            }
+            } catch(e) { console.error(e); }
         }
 
         window.addEventListener('devicemotion', handleMotion);
-        
         await Tone.start();
         setupAudio();
         startLoop();
-        
         isPlaying = true;
         document.getElementById('playBtn').style.display = 'none';
-        
-        update(); // ループ開始
+        update();
     });
-
 </script>
 
 </body>
