@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Whiplash Interactive Beat</title>
+    <title>Layered Interactive Beat</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         body {
-            background-color: #1a1a1a;
-            color: #fff;
-            font-family: sans-serif;
+            background-color: #000;
+            color: #ddd;
+            font-family: 'Courier New', sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -21,52 +21,83 @@
         #playBtn {
             padding: 20px 40px;
             font-size: 1.2rem;
-            background: #ff0055;
-            color: white;
-            border: none;
-            border-radius: 50px;
+            background: transparent;
+            color: #00ffcc;
+            border: 2px solid #00ffcc;
+            border-radius: 4px;
             cursor: pointer;
-            box-shadow: 0 0 15px #ff0055;
+            transition: 0.3s;
         }
-        #status {
-            margin-top: 20px;
+        #playBtn:active {
+            background: #00ffcc;
+            color: #000;
+        }
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
             text-align: center;
-            font-variant-numeric: tabular-nums;
+            pointer-events: none;
         }
-        .visualizer {
-            width: 200px;
-            height: 200px;
+        .layer-indicator {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .layer {
+            width: 50px;
+            height: 10px;
             background: #333;
+            border: 1px solid #555;
+        }
+        .active {
+            background: #00ffcc;
+            box-shadow: 0 0 10px #00ffcc;
+        }
+        /* Goshっぽい、じわじわ広がるビジュアル */
+        #visual {
+            width: 100px;
+            height: 100px;
+            background: rgba(0, 255, 204, 0.1);
             border-radius: 50%;
-            margin-bottom: 30px;
-            transition: transform 0.1s;
+            transition: transform 0.2s cubic-bezier(0.1, 0.7, 1.0, 0.1);
         }
     </style>
 </head>
 <body>
 
-    <div class="visualizer" id="circle"></div>
-    <button id="playBtn">START WHIPLASH</button>
-    <div id="status">
-        BPM: <span id="bpmDisplay">--</span><br>
-        Intensity: <span id="intensityDisplay">--</span>
+    <div id="info">
+        <div>BPM: <span id="bpmDisplay">110.0</span></div>
+        <div style="font-size: 0.8em; opacity: 0.7;">Keep moving to build layers</div>
     </div>
 
+    <div id="visual"></div>
+
+    <div class="layer-indicator">
+        <div id="l1" class="layer active"></div>
+        <div id="l2" class="layer"></div>
+        <div id="l3" class="layer"></div>
+        <div id="l4" class="layer"></div>
+    </div>
+
+    <br><br>
+    <button id="playBtn">INITIATE</button>
+
 <script>
-    // --- ユーザー提供の加速度ロジック ---
+    // --- Motion Logic ---
     let motionBuffer = [];
-    const BUFFER_SIZE = 25;
+    const BUFFER_SIZE = 50; // バッファを増やしてより平均的に
 
     let currentBPM = 110;
     let targetBPM = 110;
-    let currentIntensity = 0; // フィルター制御用
+    
+    // レイヤー制御用の数値 (0.0 〜 1.0)
+    let currentEnergy = 0;
+    let targetEnergy = 0;
 
     function handleMotion(event) {
-        const g = event.accelerationIncludingGravity; // または acceleration
-        // Android/iOSで重力加速度の扱いが違う場合があるため、純粋な動きなら acceleration 推奨ですが
-        // ここでは頂いたコードの通り accelerationIncludingGravity を使います
+        const g = event.accelerationIncludingGravity;
         if (!g) return;
-
         const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
         motionBuffer.push(mag);
         if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
@@ -75,169 +106,187 @@
     function computeStepPace() {
         if (motionBuffer.length < BUFFER_SIZE) return;
 
-        // 標準偏差
+        // 標準偏差 (SD)
         const mean = motionBuffer.reduce((a,b)=>a+b,0)/motionBuffer.length;
         const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0)/motionBuffer.length;
         const sd = Math.sqrt(variance);
 
-        // --- チューニング ---
-        // Whiplashはハウス/テクノなので 120-135くらいが気持ちいい
-        // sdはおおよそ静止時0.1~0.5、歩行時2.0~5.0くらいになることが多い
-        let newBPM = 110 + (sd * 10); 
-        newBPM = Math.max(110, Math.min(140, newBPM));
+        // --- BPM設定 ---
+        // SDが大きいとBPMターゲットが上がる
+        let rawTargetBPM = 110 + (sd * 15); 
+        targetBPM = Math.max(110, Math.min(138, rawTargetBPM));
 
-        targetBPM = newBPM;
-        
-        // フィルター制御用にIntensityを保存 (0.0 〜 1.0くらいに正規化したい)
-        currentIntensity = Math.min(sd / 3.0, 1.0);
+        // --- Energy設定 (レイヤー切り替え用) ---
+        // SDがある程度継続しないと上がらないようにする
+        // sdが2.0を超えるとフルパワーに向かうイメージ
+        targetEnergy = Math.min(sd / 2.5, 1.0);
     }
 
-    function smoothBPM() {
-        // BPMのスムージング
-        currentBPM += (targetBPM - currentBPM) * 0.05;
+    function updateParams() {
+        requestAnimationFrame(updateParams);
+        computeStepPace();
+
+        // 1. BPMのジワジワ変化
+        // 係数を 0.05 -> 0.002 に変更。これでかなりゆっくり追従します
+        currentBPM += (targetBPM - currentBPM) * 0.002;
         Tone.Transport.bpm.value = currentBPM;
 
-        // 画面表示更新
+        // 2. Energyのジワジワ変化
+        // 音の抜き差しがパカパカしないように、ここも少し遅延させる
+        currentEnergy += (targetEnergy - currentEnergy) * 0.01;
+
+        // UI更新
         document.getElementById("bpmDisplay").innerText = currentBPM.toFixed(1);
-        document.getElementById("intensityDisplay").innerText = currentIntensity.toFixed(2);
         
-        // ビジュアライザ更新
-        const scale = 1 + (currentIntensity * 0.5);
-        document.getElementById("circle").style.transform = `scale(${scale})`;
-        document.getElementById("circle").style.backgroundColor = `hsl(${340 + currentIntensity * 50}, 100%, 50%)`;
+        // ビジュアル更新
+        const scale = 1 + currentEnergy * 2;
+        document.getElementById("visual").style.transform = `scale(${scale})`;
+
+        // レイヤー表示更新
+        const layers = [
+            document.getElementById("l1"),
+            document.getElementById("l2"),
+            document.getElementById("l3"),
+            document.getElementById("l4")
+        ];
+        layers.forEach((el, i) => {
+            // 0.2刻みでレイヤー点灯
+            if (currentEnergy > i * 0.25) el.classList.add("active");
+            else el.classList.remove("active");
+        });
     }
 
-    // --- Audio Setup (Tone.js) ---
-    let kick, bass, hihat, filter;
+    // --- Sound Design (Whiplash x Jamie xx) ---
+    let kick, bass, hihat, clap, lead;
+    let volHihat, volClap, volLead;
 
     function setupAudio() {
-        // マスターエフェクト: 全体的に圧を出すコンプレッサー
-        const masterComp = new Tone.Compressor(-10, 3).toDestination();
+        const masterLimit = new Tone.Limiter(-1).toDestination();
 
-        // 1. ローパスフィルター (動きに合わせて開閉する)
-        // 初期値は500Hz（少しこもった音）
-        filter = new Tone.Filter(500, "lowpass").connect(masterComp);
-
-        // 2. KICK: 鋭いアタックのキック
+        // 1. KICK (Level 1: 常に鳴る)
         kick = new Tone.MembraneSynth({
             pitchDecay: 0.05,
-            octaves: 10,
+            octaves: 4,
             oscillator: { type: "sine" },
-            envelope: {
-                attack: 0.001,
-                decay: 0.4,
-                sustain: 0.01,
-                release: 1.4,
-                attackCurve: "exponential"
-            }
-        }).connect(masterComp); // キックはフィルタを通さずズシッとさせる
+            envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 }
+        }).connect(masterLimit);
+        kick.volume.value = 0;
 
-        // 3. BASS: 鋸波(Sawtooth)でエッジの効いたベース
+        // 2. BASS (Level 1: 常に鳴る)
+        // Whiplashっぽいエッジのあるベース
         bass = new Tone.MonoSynth({
             oscillator: { type: "sawtooth" },
-            envelope: {
-                attack: 0.01,
-                decay: 0.2,
-                sustain: 0.2,
-                release: 0.2
-            },
-            filterEnvelope: {
-                attack: 0.01,
-                decay: 0.2,
-                baseFrequency: 200,
-                octaves: 2,
-                exponent: 2
-            }
-        }).connect(filter); // ベースは動きで音が変化する
+            envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 },
+            filterEnvelope: { attack: 0.001, decay: 0.2, baseFrequency: 150, octaves: 2.5, exponent: 2 }
+        }).connect(masterLimit);
+        bass.volume.value = -3;
 
-        // 4. HIHAT: チキチキ音
-        hihat = new Tone.MetalSynth({
-            frequency: 200,
-            envelope: {
-                attack: 0.001,
-                decay: 0.05,
-                release: 0.01
-            },
-            harmonicity: 5.1,
-            modulationIndex: 32,
-            resonance: 4000,
-            octaves: 1.5
-        }).connect(filter);
-        hihat.volume.value = -10;
+        // 3. HIHAT (Level 2)
+        hihat = new Tone.NoiseSynth({
+            noise: { type: "white" },
+            envelope: { attack: 0.001, decay: 0.03, sustain: 0 }
+        }).connect(masterLimit);
+        volHihat = new Tone.Volume(-60).connect(masterLimit); // 初期音量は無音
+        hihat.disconnect(); hihat.connect(volHihat);
 
-        // --- Loop Setup (16分音符単位でスケジューリング) ---
+        // 4. CLAP/SNARE (Level 3)
+        clap = new Tone.NoiseSynth({
+            noise: { type: "pink" },
+            envelope: { attack: 0.001, decay: 0.2, sustain: 0 }
+        }).connect(masterLimit);
+        volClap = new Tone.Volume(-60).connect(masterLimit);
+        clap.disconnect(); clap.connect(volClap);
+
+        // 5. LEAD SYNTH (Level 4: Goshっぽい高音の反復)
+        // FMシンセで金属的な響き
+        lead = new Tone.PolySynth(Tone.FMSynth, {
+            harmonicity: 3.0,
+            modulationIndex: 10,
+            oscillator: { type: "sine" },
+            envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 },
+            modulation: { type: "square" },
+            modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 }
+        }).connect(masterLimit);
+        // PingPongDelayで空間の広がりを出す
+        const delay = new Tone.PingPongDelay("8n", 0.4).connect(masterLimit);
+        volLead = new Tone.Volume(-60).connect(delay);
+        lead.disconnect(); lead.connect(volLead);
+
+
+        // --- Loop Logic ---
+        // 1小節(16ステップ)のループを作成
         let step = 0;
         
         Tone.Transport.scheduleRepeat((time) => {
-            // 4つ打ちキック (0, 4, 8, 12)
+            // --- 音量制御（ジワジワ変化するEnergyに基づいてボリュームを操作）---
+            // 単なるON/OFFだと不自然なので、Energy閾値を超えたらボリュームを上げる
+            
+            // Level 2: Hihat
+            // Energyが0.25を超えたら聞こえ始める
+            if (currentEnergy > 0.25) volHihat.volume.rampTo(-10, 0.1);
+            else volHihat.volume.rampTo(-60, 0.5);
+
+            // Level 3: Clap
+            // Energyが0.5を超えたら
+            if (currentEnergy > 0.5) volClap.volume.rampTo(-5, 0.1);
+            else volClap.volume.rampTo(-60, 0.5);
+
+            // Level 4: Lead
+            // Energyが0.75を超えたら
+            if (currentEnergy > 0.75) volLead.volume.rampTo(-8, 0.1);
+            else volLead.volume.rampTo(-60, 0.5);
+
+
+            // --- パターン演奏 ---
+            
+            // 1. Kick (4つ打ち)
             if (step % 4 === 0) {
                 kick.triggerAttackRelease("C1", "8n", time);
             }
 
-            // 裏拍ハイハット (2, 6, 10, 14) + 装飾
-            if (step % 4 === 2) {
-                hihat.triggerAttackRelease("32n", time, 1); // Open
-            } else if (step % 2 !== 0) {
-                hihat.triggerAttackRelease("32n", time, 0.5); // Closed
+            // 2. Bass (Whiplash的グルーヴ)
+            // 裏拍を意識したパターン
+            if (step === 0) bass.triggerAttackRelease("F2", "16n", time);
+            if (step === 2) bass.triggerAttackRelease("F2", "16n", time);
+            if (step === 3) bass.triggerAttackRelease("F2", "16n", time);
+            if (step === 7) bass.triggerAttackRelease("F2", "16n", time); // syncopation
+            if (step === 10) bass.triggerAttackRelease("F1", "8n", time); // low drop
+            if (step === 14) bass.triggerAttackRelease("Ab2", "16n", time);
+
+            // 3. Hihat (16 beat)
+            if (step % 2 === 0) hihat.triggerAttackRelease("16n", time); // down
+            if (step % 2 !== 0) hihat.triggerAttackRelease("32n", time, 0.8); // up (accent)
+
+            // 4. Clap (2 & 4)
+            if (step === 4 || step === 12) {
+                clap.triggerAttackRelease("8n", time);
             }
 
-            // ベースライン (Whiplashっぽいミニマルなグルーヴ)
-            // C2を基本に、動きをつけてリフを作る
-            if (step === 0) bass.triggerAttackRelease("C2", "8n", time);
-            if (step === 2) bass.triggerAttackRelease("C2", "8n", time);
-            if (step === 3) bass.triggerAttackRelease("Eb2", "16n", time); // アクセント
-            if (step === 8) bass.triggerAttackRelease("C2", "8n", time);
-            if (step === 10) bass.triggerAttackRelease("Bb1", "8n", time);
-            if (step === 14) bass.triggerAttackRelease("C2", "16n", time);
+            // 5. Lead (Gosh的リフレイン)
+            // 高い音で「ピー、ピー」と鳴り続ける不安感と高揚感
+            // 3拍子的なフレーズを4拍子に乗せてズレていく感じにする
+            if ([0, 3, 6, 9, 12, 15].includes(step)) {
+                // EnergyがMAXに近いとオクターブ上げる
+                const note = currentEnergy > 0.9 ? "C6" : "C5";
+                lead.triggerAttackRelease(note, "32n", time);
+            }
 
             step = (step + 1) % 16;
         }, "16n");
     }
 
-    // --- メインループ ---
-    function update() {
-        requestAnimationFrame(update);
-        computeStepPace();
-        smoothBPM();
-
-        // フィルターの周波数を動き（Intensity）に連動させる
-        // 静止時: 300Hz (こもる) 〜 激しい時: 5000Hz (派手になる)
-        if (filter) {
-            const targetFreq = 300 + (currentIntensity * 5000);
-            // 滑らかに変化させる
-            filter.frequency.rampTo(targetFreq, 0.1);
-        }
-    }
-
-    // --- イベントリスナー ---
     document.getElementById("playBtn").addEventListener("click", async () => {
-        // iOS のセンサー許可
         if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
             try {
-                const permissionState = await DeviceMotionEvent.requestPermission();
-                if (permissionState !== 'granted') {
-                    alert('センサーの許可が必要です');
-                    return;
-                }
-            } catch (e) {
-                console.error(e);
-            }
+                await DeviceMotionEvent.requestPermission();
+            } catch (e) { console.error(e); }
         }
-
         window.addEventListener("devicemotion", handleMotion);
-
-        // AudioContextの開始
         await Tone.start();
-        console.log("Audio started");
-
         setupAudio();
         Tone.Transport.start();
-        
-        // ループ開始
-        update();
-
+        updateParams();
         document.getElementById("playBtn").style.display = "none";
-        document.getElementById("status").style.display = "block";//
     });
 </script>
 </body>
