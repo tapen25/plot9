@@ -3,21 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Walk & Sound Interaction</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Walk Sound Interaction</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; }
+        #playBtn { padding: 15px 30px; font-size: 1.2rem; margin-top: 20px; }
+        .debug-info { margin: 10px 0; color: #555; font-size: 0.9rem; }
+        #status { font-weight: bold; color: blue; }
+        #val-display { color: red; font-weight: bold; font-size: 1.2rem; }
+    </style>
 </head>
 <body>
-
-    <div class="container">
-        <h1>Walking Sound</h1>
-        <p>歩くと音が回転します</p>
-        
-        <p>揺れ強度: <span id="shakeValue">0.00</span></p>
-
-        <button id="playBtn">START</button>
+    <h1>Walking Sound</h1>
+    <p>歩くと音が回転します</p>
+    
+    <div class="debug-info">
+        Status: <span id="status">待機中</span><br>
+        センサー値(SD): <span id="val-display">0.00</span>
     </div>
 
-    <script src="scripts.js"></script>
+    <button id="playBtn">START</button>
+
+    <script src="script.js"></script>
 </body>
 </html>
