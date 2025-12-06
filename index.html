@@ -1,134 +1,166 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Walk Reactive Whiplash Minimal Beat</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WalkSync Whiplash Style</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<style>
+body { background: #111; color: #fff; font-family: sans-serif; text-align:center; padding:40px; }
+button { font-size: 20px; padding: 15px 30px; border-radius: 10px; }
+</style>
 </head>
+<body>
 
-<body style="background:#111;color:#fff;font-family:sans-serif;padding:20px;">
-    <h2>Walk Reactive Minimal Bass (Whiplash Intro風)</h2>
-    <button id="playBtn" style="padding:16px 32px;">Start</button>
+<h2>Whiplash Intro × Walk Sync</h2>
+<button id="playBtn">Start</button>
+<p id="bpmLabel">BPM: --</p>
 
 <script>
-// ---------------------------------------------
-// Motion Buffer（揺れの標準偏差）
-// ---------------------------------------------
+// -------------------------
+// Motion analysis
+// -------------------------
 const BUFFER_SIZE = 25;
-const motionBuffer = [];
+let motionBuffer = [];
 
-function handleMotion(event) {
-    const g = event.accelerationIncludingGravity;
+function handleMotion(e){
+    const g = e.accelerationIncludingGravity;
     if(!g) return;
     const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
     motionBuffer.push(mag);
-    if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
+    if(motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
 }
 
-function calcStd() {
-    if (motionBuffer.length === 0) return 0;
-    const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
-    const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0) / motionBuffer.length;
-    return Math.sqrt(variance);
+function calcStdDev(arr){
+    if(arr.length < 2) return 0;
+    const avg = arr.reduce((a,b)=>a+b,0) / arr.length;
+    const v = arr.map(x => (x-avg)**2);
+    return Math.sqrt(v.reduce((a,b)=>a+b,0) / arr.length);
 }
 
-// ---------------------------------------------
-// Audio
-// ---------------------------------------------
-let kick, bass, bassFilter, bassDist, isPlaying=false;
+// -------------------------
+// AUDIO
+// -------------------------
+let kick, bass, noise, filter, loop, sweepLoop;
 
-function setupAudio() {
-
-    // --- Kick (Whiplashイントロっぽい硬めのアタック) ---
-    kick = new Tone.MembraneSynth({
-        pitchDecay: 0.03,
-        octaves: 3,
-        envelope: { attack: 0.001, decay: 0.25, sustain: 0 }
+// Whiplash系キック
+function createKick(){
+    const osc = new Tone.Oscillator("A1").toDestination();
+    const env = new Tone.AmplitudeEnvelope({
+        attack: 0.001,
+        decay: 0.10,
+        sustain: 0,
+        release: 0.05
     }).toDestination();
 
-
-    // --- Sub Bass Chain --- 
-    // Sine → Distortion → LowPass Filter → Master
-    bassDist = new Tone.Distortion(0.15);  // ほんのり Saturator
-    bassFilter = new Tone.Filter(120, "lowpass"); // 深めのサブベース感
-    bass = new Tone.Synth({
-        oscillator: { type: "sine" },
-        envelope: { attack: 0.02, decay: 0.3, sustain: 0.3, release: 0.5 }
-    });
-
-    bass.chain(bassDist, bassFilter, Tone.Destination);
+    osc.connect(env);
+    return {
+        trigger: ()=> {
+            osc.frequency.setValueAtTime("A1", Tone.now());
+            osc.frequency.exponentialRampToValueAtTime("A0", Tone.now()+0.12);
+            env.triggerAttackRelease(0.15);
+        }
+    };
 }
 
-// ---------------------------------------------
-// BPM mapping (std→BPM 100~130)
-// ---------------------------------------------
-function stdToBpm(std) {
-    const minStd = 0.05;
-    const maxStd = 0.35;
-    let t = (std - minStd) / (maxStd - minStd);
-    t = Math.max(0, Math.min(1, t)); // clamp
-    return 100 + t * 30;
+// Deep FM bass
+function createBass(){
+    const bass = new Tone.FMSynth({
+        modulationIndex: 2,
+        envelope: { attack:0.01, decay:0.2, sustain:0.1, release:0.2 },
+        modulationEnvelope: { attack:0.01, decay:0.2, sustain:0.1, release:0.2 }
+    }).toDestination();
+    return bass;
 }
 
-// ---------------------------------------------
-// Beat Loop
-// ---------------------------------------------
-function startLoop() {
-    let step = 0;
+// Noise sweep（Whiplash の息のような音）
+function createNoiseSweep(){
+    const noise = new Tone.Noise("white");
+    const filter = new Tone.Filter(800, "lowpass").toDestination();
+    noise.connect(filter);
 
-    Tone.Transport.scheduleRepeat((time)=>{
+    return {
+        trigger: ()=>{
+            noise.start();
+            filter.frequency.setValueAtTime(1200, Tone.now());
+            filter.frequency.exponentialRampToValueAtTime(200, Tone.now()+0.3);
+            setTimeout(()=> noise.stop(), 350);
+        }
+    }
+}
 
-        const std = calcStd();
-        const targetBpm = stdToBpm(std);
+function setupAudio(){
+    kick = createKick();
+    bass = createBass();
+    noise = createNoiseSweep();
+}
 
-        // ★ BPM を 2秒かけてジワジワ追従
-        Tone.Transport.bpm.rampTo(targetBpm, 2.0);
+// -------------------------
+// LOOP
+// -------------------------
+function startLoop(){
+    // メインパターン（4拍ループ）
+    loop = new Tone.Loop(time=>{
+        kick.trigger();
 
-        // --- Kick (基本の4つ打ち) ---
-        if (step % 2 === 0) {
-            kick.triggerAttackRelease("C2", "8n", time);
+        // 1拍目と3拍目にベース
+        const beat = Tone.Transport.position.split(":")[1];
+        if(beat == "0" || beat == "2"){
+            bass.triggerAttackRelease("E1", "8n", time + 0.05);
         }
 
-        // --- Sub Bass (Kickと少しズラす) ---
-        if (step % 2 === 0) {
-            const bassTime = time + 0.06; // わずかに遅らせてグルーヴ感
-            bass.triggerAttackRelease("C1", "4n", bassTime);
+        // 2小節ごとに軽いノイズスウィープ
+        if(Math.random() < 0.25){
+            noise.trigger();
         }
-
-        step++;
-    }, "8n");
+    }, "4n").start(0);
 
     Tone.Transport.start();
 }
 
+// -------------------------
+// BPM follow
+// -------------------------
+let currentBPM = 110;  // 初期
+Tone.Transport.bpm.value = currentBPM;
 
-// ---------------------------------------------
-// Animation Loop
-// ---------------------------------------------
-function update() {
-    if (!isPlaying) return;
+function update(){
+    if(motionBuffer.length > 10){
+        const std = calcStdDev(motionBuffer); // 揺れの大きさ
+        const target = mapStdToBPM(std);
+
+        // ジワジワ寄せる（急に変わらない）
+        currentBPM = currentBPM*0.92 + target*0.08;
+        Tone.Transport.bpm.rampTo(currentBPM, 0.5);
+
+        document.getElementById("bpmLabel").innerText =
+            "BPM: " + currentBPM.toFixed(1);
+    }
     requestAnimationFrame(update);
 }
 
-// ---------------------------------------------
-// Start Button
-// ---------------------------------------------
-document.getElementById('playBtn').addEventListener('click', async ()=>{
-    if (DeviceMotionEvent?.requestPermission) {
-        const s = await DeviceMotionEvent.requestPermission();
-        if(s!=='granted') return alert("センサー許可が必要です");
-    }
+function mapStdToBPM(std){
+    // 揺れが小さい→100
+    // 揺れが大きい→130
+    const clamped = Math.min(Math.max(std, 0.05), 0.8);
+    return 100 + (clamped-0.05) * (30/(0.75));
+}
 
-    window.addEventListener('devicemotion', handleMotion);
+// -------------------------
+// Start
+// -------------------------
+document.getElementById("playBtn").addEventListener("click", async ()=>{
+    if(DeviceMotionEvent?.requestPermission){
+        const s = await DeviceMotionEvent.requestPermission();
+        if(s !== "granted") return alert("センサー許可が必要です");
+    }
+    window.addEventListener("devicemotion", handleMotion);
 
     await Tone.start();
     setupAudio();
     startLoop();
 
-    isPlaying = true;
-    document.getElementById('playBtn').style.display = 'none';
-
+    document.getElementById("playBtn").style.display = "none";
     update();
 });
 </script>
