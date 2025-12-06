@@ -11,9 +11,6 @@
     <button id="playBtn" style="padding:15px 30px;">Start</button>
 
     <script>
-    // ---------------------------
-    // Motion Buffer (標準偏差計算用)
-    // ---------------------------
     const BUFFER_SIZE = 25;
     const motionBuffer = [];
 
@@ -25,9 +22,6 @@
         if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
     }
 
-    // ---------------------------
-    // 標準偏差を計算
-    // ---------------------------
     function calcStd() {
         if (motionBuffer.length === 0) return 0;
         const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
@@ -35,10 +29,8 @@
         return Math.sqrt(variance);
     }
 
-    // ---------------------------
-    // Tone.js Setup
-    // ---------------------------
-    let kick, snare, hihat, isPlaying=false;
+    // Synth
+    let kick, snare, isPlaying = false;
 
     function setupAudio() {
         // Kick
@@ -51,62 +43,39 @@
         // Snare
         snare = new Tone.NoiseSynth({
             noise: { type: "white" },
-            envelope: { attack: 0.001, decay: 0.15, sustain: 0 }
-        }).toDestination();
-
-        // Hi-hat
-        hihat = new Tone.MetalSynth({
-            frequency: 400,
-            envelope: { attack: 0.001, decay: 0.08, release: 0.05 },
-            harmonicity: 5.1,
-            modulationIndex: 32,
-            resonance: 4000,
-            octaves: 1.5
+            envelope: { attack: 0.001, decay: 0.12, sustain: 0 }
         }).toDestination();
     }
 
-    // ---------------------------
-    // BPM は 100〜130 の範囲にマッピング
-    // 標準偏差 std: 0.05 ~ 0.35 あたりを想定
-    // ---------------------------
+    // ---- BPM Mapping ----
+    // 標準偏差 std を 0.05〜0.35 → BPM 100〜130 にマッピング
     function stdToBpm(std) {
         const minStd = 0.05;
         const maxStd = 0.35;
-
         let t = (std - minStd) / (maxStd - minStd);
         t = Math.max(0, Math.min(1, t)); // clamp
-        return 100 + t * 30; // 100〜130 BPM
+        return 100 + t * 30; // BPM 100~130
     }
 
-    // ---------------------------
-    // Loop（歩行ペースでテンポ変化）
-    // ---------------------------
+    // ---- Loop ----
     function startLoop() {
         let step = 0;
 
-        Tone.Transport.scheduleRepeat((time)=>{
+        Tone.Transport.scheduleRepeat((time) => {
             const std = calcStd();
             const targetBpm = stdToBpm(std);
 
-            // BPMを滑らかに変化させる
-            Tone.Transport.bpm.rampTo(targetBpm, 0.5);
+            // ★ BPMを超なめらかに変化（2秒かけて追従）
+            Tone.Transport.bpm.rampTo(targetBpm, 2.0);
 
             const walking = std > 0.12;
-            const hardWalk = std > 0.25;
 
-            // Kick（常に）
-            if (step % 2 === 0) kick.triggerAttackRelease("C2","8n",time);
+            // Kick
+            if (step % 2 === 0) kick.triggerAttackRelease("C2", "8n", time);
 
-            // Snare（歩くと追加）
+            // Snare（歩いている時だけ）
             if (walking && step % 4 === 2) {
                 snare.triggerAttackRelease("8n", time);
-            }
-
-            // Hi-hat（歩行強さで変化）
-            if (hardWalk) {
-                hihat.triggerAttackRelease("16n", time);
-            } else if (walking && step % 2 === 1) {
-                hihat.triggerAttackRelease("16n", time);
             }
 
             step++;
@@ -115,13 +84,9 @@
         Tone.Transport.start();
     }
 
-    // ---------------------------
-    // Update loop
-    // ---------------------------
     function update() {
         if (!isPlaying) return;
         requestAnimationFrame(update);
-        // 必要なら画面表示更新など
     }
 
     // ---------------------------
@@ -144,7 +109,6 @@
 
         update();
     });
-
     </script>
 </body>
 </html>
