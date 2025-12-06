@@ -54,7 +54,6 @@
             background: #00ffcc;
             box-shadow: 0 0 10px #00ffcc;
         }
-        /* Goshっぽい、じわじわ広がるビジュアル */
         #visual {
             width: 100px;
             height: 100px;
@@ -86,12 +85,11 @@
 <script>
     // --- Motion Logic ---
     let motionBuffer = [];
-    const BUFFER_SIZE = 50; // バッファを増やしてより平均的に
+    const BUFFER_SIZE = 50; 
 
     let currentBPM = 110;
     let targetBPM = 110;
     
-    // レイヤー制御用の数値 (0.0 〜 1.0)
     let currentEnergy = 0;
     let targetEnergy = 0;
 
@@ -106,19 +104,12 @@
     function computeStepPace() {
         if (motionBuffer.length < BUFFER_SIZE) return;
 
-        // 標準偏差 (SD)
         const mean = motionBuffer.reduce((a,b)=>a+b,0)/motionBuffer.length;
         const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0)/motionBuffer.length;
         const sd = Math.sqrt(variance);
 
-        // --- BPM設定 ---
-        // SDが大きいとBPMターゲットが上がる
         let rawTargetBPM = 110 + (sd * 15); 
         targetBPM = Math.max(110, Math.min(138, rawTargetBPM));
-
-        // --- Energy設定 (レイヤー切り替え用) ---
-        // SDがある程度継続しないと上がらないようにする
-        // sdが2.0を超えるとフルパワーに向かうイメージ
         targetEnergy = Math.min(sd / 2.5, 1.0);
     }
 
@@ -126,23 +117,16 @@
         requestAnimationFrame(updateParams);
         computeStepPace();
 
-        // 1. BPMのジワジワ変化
-        // 係数を 0.05 -> 0.002 に変更。これでかなりゆっくり追従します
         currentBPM += (targetBPM - currentBPM) * 0.002;
         Tone.Transport.bpm.value = currentBPM;
 
-        // 2. Energyのジワジワ変化
-        // 音の抜き差しがパカパカしないように、ここも少し遅延させる
         currentEnergy += (targetEnergy - currentEnergy) * 0.01;
 
-        // UI更新
         document.getElementById("bpmDisplay").innerText = currentBPM.toFixed(1);
         
-        // ビジュアル更新
         const scale = 1 + currentEnergy * 2;
         document.getElementById("visual").style.transform = `scale(${scale})`;
 
-        // レイヤー表示更新
         const layers = [
             document.getElementById("l1"),
             document.getElementById("l2"),
@@ -150,20 +134,19 @@
             document.getElementById("l4")
         ];
         layers.forEach((el, i) => {
-            // 0.2刻みでレイヤー点灯
             if (currentEnergy > i * 0.25) el.classList.add("active");
             else el.classList.remove("active");
         });
     }
 
-    // --- Sound Design (Whiplash x Jamie xx) ---
+    // --- Sound Design ---
     let kick, bass, hihat, clap, lead;
     let volHihat, volClap, volLead;
 
     function setupAudio() {
         const masterLimit = new Tone.Limiter(-1).toDestination();
 
-        // 1. KICK (Level 1: 常に鳴る)
+        // 1. KICK
         kick = new Tone.MembraneSynth({
             pitchDecay: 0.05,
             octaves: 4,
@@ -172,8 +155,7 @@
         }).connect(masterLimit);
         kick.volume.value = 0;
 
-        // 2. BASS (Level 1: 常に鳴る)
-        // Whiplashっぽいエッジのあるベース
+        // 2. BASS
         bass = new Tone.MonoSynth({
             oscillator: { type: "sawtooth" },
             envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 },
@@ -181,15 +163,15 @@
         }).connect(masterLimit);
         bass.volume.value = -3;
 
-        // 3. HIHAT (Level 2)
+        // 3. HIHAT
         hihat = new Tone.NoiseSynth({
             noise: { type: "white" },
-            envelope: { attack: 0.001, decay: 0.03, sustain: 0 }
+            envelope: { attack: 0.001, decay: 0.1, sustain: 0 } // 初期値
         }).connect(masterLimit);
-        volHihat = new Tone.Volume(-60).connect(masterLimit); // 初期音量は無音
+        volHihat = new Tone.Volume(-60).connect(masterLimit);
         hihat.disconnect(); hihat.connect(volHihat);
 
-        // 4. CLAP/SNARE (Level 3)
+        // 4. CLAP/SNARE
         clap = new Tone.NoiseSynth({
             noise: { type: "pink" },
             envelope: { attack: 0.001, decay: 0.2, sustain: 0 }
@@ -197,8 +179,7 @@
         volClap = new Tone.Volume(-60).connect(masterLimit);
         clap.disconnect(); clap.connect(volClap);
 
-        // 5. LEAD SYNTH (Level 4: Goshっぽい高音の反復)
-        // FMシンセで金属的な響き
+        // 5. LEAD SYNTH
         lead = new Tone.PolySynth(Tone.FMSynth, {
             harmonicity: 3.0,
             modulationIndex: 10,
@@ -207,66 +188,62 @@
             modulation: { type: "square" },
             modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 }
         }).connect(masterLimit);
-        // PingPongDelayで空間の広がりを出す
         const delay = new Tone.PingPongDelay("8n", 0.4).connect(masterLimit);
         volLead = new Tone.Volume(-60).connect(delay);
         lead.disconnect(); lead.connect(volLead);
 
 
         // --- Loop Logic ---
-        // 1小節(16ステップ)のループを作成
         let step = 0;
         
         Tone.Transport.scheduleRepeat((time) => {
-            // --- 音量制御（ジワジワ変化するEnergyに基づいてボリュームを操作）---
-            // 単なるON/OFFだと不自然なので、Energy閾値を超えたらボリュームを上げる
-            
-            // Level 2: Hihat
-            // Energyが0.25を超えたら聞こえ始める
+            // 音量制御
             if (currentEnergy > 0.25) volHihat.volume.rampTo(-10, 0.1);
             else volHihat.volume.rampTo(-60, 0.5);
 
-            // Level 3: Clap
-            // Energyが0.5を超えたら
             if (currentEnergy > 0.5) volClap.volume.rampTo(-5, 0.1);
             else volClap.volume.rampTo(-60, 0.5);
 
-            // Level 4: Lead
-            // Energyが0.75を超えたら
             if (currentEnergy > 0.75) volLead.volume.rampTo(-8, 0.1);
             else volLead.volume.rampTo(-60, 0.5);
 
 
             // --- パターン演奏 ---
             
-            // 1. Kick (4つ打ち)
+            // 1. Kick
             if (step % 4 === 0) {
                 kick.triggerAttackRelease("C1", "8n", time);
             }
 
-            // 2. Bass (Whiplash的グルーヴ)
-            // 裏拍を意識したパターン
+            // 2. Bass
             if (step === 0) bass.triggerAttackRelease("Eb2", "16n", time);
             if (step === 2) bass.triggerAttackRelease("Bb2", "16n", time);
             if (step === 3) bass.triggerAttackRelease("Eb2", "16n", time);
-            if (step === 7) bass.triggerAttackRelease("C#3", "16n", time); // syncopation
-            if (step === 10) bass.triggerAttackRelease("Ab2", "8n", time); // low drop
+            if (step === 7) bass.triggerAttackRelease("B2", "16n", time);
+            if (step === 10) bass.triggerAttackRelease("Ab2", "8n", time);
             if (step === 14) bass.triggerAttackRelease("Bb2", "16n", time);
 
-            // 3. Hihat (16 beat)
-            if (step % 2 === 0) hihat.triggerAttackRelease("16n", time); // down
-            if (step % 2 !== 0) hihat.triggerAttackRelease("32n", time, 0.8); // up (accent)
+            // 3. Hihat (8 beat Open/Closed) ★ここを変更しました
+            if (step % 2 === 0) {
+                // 裏拍 (2, 6, 10, 14) はオープンハイハット
+                if (step % 4 === 2) {
+                    hihat.envelope.decay = 0.3; // 長く
+                    hihat.triggerAttackRelease("32n", time, 1.0); 
+                } 
+                // 表拍 (0, 4, 8, 12) はクローズハイハット
+                else {
+                    hihat.envelope.decay = 0.03; // 短く
+                    hihat.triggerAttackRelease("32n", time, 0.5); 
+                }
+            }
 
-            // 4. Clap (2 & 4)
+            // 4. Clap
             if (step === 4 || step === 12) {
                 clap.triggerAttackRelease("8n", time);
             }
 
-            // 5. Lead (Gosh的リフレイン)
-            // 高い音で「ピー、ピー」と鳴り続ける不安感と高揚感
-            // 3拍子的なフレーズを4拍子に乗せてズレていく感じにする
+            // 5. Lead
             if ([0, 3, 6, 9, 12, 15].includes(step)) {
-                // EnergyがMAXに近いとオクターブ上げる
                 const note = currentEnergy > 0.9 ? "C6" : "C5";
                 lead.triggerAttackRelease(note, "32n", time);
             }
