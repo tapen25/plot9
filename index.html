@@ -1,29 +1,155 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Walk Sound Interaction</title>
+    <title>Walk Reactive Beat</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    <style>
-        body { font-family: sans-serif; text-align: center; padding: 20px; }
-        #playBtn { padding: 15px 30px; font-size: 1.2rem; margin-top: 20px; }
-        .debug-info { margin: 10px 0; color: #555; font-size: 0.9rem; }
-        #status { font-weight: bold; color: blue; }
-        #val-display { color: red; font-weight: bold; font-size: 1.2rem; }
-    </style>
 </head>
-<body>
-    <h1>Walking Sound</h1>
-    <p>歩くと音が回転します</p>
-    
-    <div class="debug-info">
-        Status: <span id="status">待機中</span><br>
-        センサー値(SD): <span id="val-display">0.00</span>
-    </div>
+<body style="background:#111;color:#fff;font-family:sans-serif;padding:20px;">
+    <h2>Walk Reactive Beat</h2>
+    <button id="playBtn" style="padding:15px 30px;">Start</button>
 
-    <button id="playBtn">START</button>
+    <script>
+    // ---------------------------
+    // Motion Buffer (標準偏差計算用)
+    // ---------------------------
+    const BUFFER_SIZE = 25;
+    const motionBuffer = [];
 
-    <script src="script.js"></script>
+    function handleMotion(event) {
+        const g = event.accelerationIncludingGravity;
+        if(!g) return;
+        const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
+        motionBuffer.push(mag);
+        if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
+    }
+
+    // ---------------------------
+    // 標準偏差を計算
+    // ---------------------------
+    function calcStd() {
+        if (motionBuffer.length === 0) return 0;
+        const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
+        const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0) / motionBuffer.length;
+        return Math.sqrt(variance);
+    }
+
+    // ---------------------------
+    // Tone.js Setup
+    // ---------------------------
+    let kick, snare, hihat, panner, isPlaying=false;
+
+    function setupAudio() {
+        // 空間定位用 Panner3D
+        panner = new Tone.Panner3D({
+            positionX: 0,
+            positionY: 0,
+            positionZ: 1
+        }).toDestination();
+
+        // Listener の位置も可動
+        Tone.Listener.positionX.value = 0;
+        Tone.Listener.positionY.value = 0;
+        Tone.Listener.positionZ.value = 0;
+
+        // Kick
+        kick = new Tone.MembraneSynth({
+            pitchDecay: 0.05,
+            octaves: 4,
+            envelope: { attack: 0.001, decay: 0.4, sustain: 0 }
+        }).connect(panner);
+
+        // Snare
+        snare = new Tone.NoiseSynth({
+            noise: { type: "white" },
+            envelope: { attack: 0.001, decay: 0.2, sustain: 0 }
+        }).connect(panner);
+
+        // Hi-hat
+        hihat = new Tone.MetalSynth({
+            frequency: 400,
+            envelope: { attack: 0.001, decay: 0.1, release: 0.1 },
+            harmonicity: 5.1,
+            modulationIndex: 32,
+            resonance: 4000,
+            octaves: 1.5
+        }).connect(panner);
+    }
+
+    // ---------------------------
+    // Loop（歩行による変化）
+    // ---------------------------
+    function startLoop() {
+        let step = 0;
+
+        Tone.Transport.scheduleRepeat((time)=>{
+            const std = calcStd();
+
+            // 標準偏差で歩行の強さを判定
+            const walking = std > 0.15;   // ←しきい値は調整可
+            const hardWalk = std > 0.30;
+
+            // Kick（常に打つ）
+            if (step % 2 === 0) kick.triggerAttackRelease("C2","8n",time);
+
+            // Snare（歩くと入る）
+            if (walking && step % 4 === 2) {
+                snare.triggerAttackRelease("8n", time);
+            }
+
+            // Hi-hat（歩きの強さで密度UP）
+            if (hardWalk) {
+                hihat.triggerAttackRelease("16n", time);
+            } else if (walking && step % 2 === 1) {
+                hihat.triggerAttackRelease("16n", time);
+            }
+
+            // パン移動（歩くたびに左右ゆらぐ）
+            if (walking) {
+                const pan = (Math.random()*2-1) * 0.8; // -0.8〜0.8
+                panner.positionX.setValueAtTime(pan, time);
+            }
+
+            step++;
+        }, "8n");
+
+        Tone.Transport.start();
+    }
+
+    // ---------------------------
+    // Animation Loop（画面更新）
+    // ---------------------------
+    function update() {
+        if (!isPlaying) return;
+        requestAnimationFrame(update);
+        const std = calcStd();
+
+        // Listener を軽く揺らす（歩くと空間も揺れる）
+        Tone.Listener.positionY.value = std * 0.2;
+    }
+
+    // ---------------------------
+    // Start Button
+    // ---------------------------
+    document.getElementById('playBtn').addEventListener('click', async ()=>{
+        if (DeviceMotionEvent?.requestPermission) {
+            const s = await DeviceMotionEvent.requestPermission();
+            if(s!=='granted') return alert("センサー許可が必要です");
+        }
+
+        window.addEventListener('devicemotion', handleMotion);
+
+        await Tone.start();
+        setupAudio();
+        startLoop();
+
+        isPlaying = true;
+        document.getElementById('playBtn').style.display = 'none';
+
+        update();
+    });
+
+    </script>
 </body>
 </html>
