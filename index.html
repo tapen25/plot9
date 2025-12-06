@@ -3,53 +3,19 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Walk DJ Mix (Fixed)</title>
+    <title>Walk Tempo Reactive Beat</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    <style>
-        body { background:#111; color:#fff; font-family:sans-serif; padding:20px; text-align:center; touch-action: manipulation; }
-        h2 { margin-bottom: 5px; }
-        
-        #playBtn { padding:15px 40px; font-size:1.2rem; border-radius:30px; border:none; background:#ff0055; color:white; cursor:pointer; font-weight:bold; margin-top: 20px;}
-        
-        #status { margin-top: 20px; font-size: 2.5rem; font-weight: bold; color: #555; transition: color 0.2s; height: 50px;}
-        #subStatus { font-size: 1rem; color: #aaa; height: 20px; margin-bottom: 20px;}
-        
-        .controls { margin: 20px auto; padding: 15px; background: #222; border-radius: 10px; max-width: 400px; }
-        input[type=range] { width: 100%; margin: 10px 0; }
-        label { display: block; margin-bottom: 5px; color: #00bfff; }
-
-        .test-btn { background: #333; color: #fff; border: 1px solid #555; padding: 5px 15px; border-radius: 15px; cursor: pointer; margin-top: 10px; font-size: 0.8rem;}
-        .test-btn:active { background: #555; }
-    </style>
 </head>
-<body>
-    <h2>Walk DJ Mix v2</h2>
-    
-    <div id="status">STOP</div>
-    <div id="subStatus">歩いてみてください</div>
-
-    <div class="controls">
-        <label>感度調整 (Sensitivity)</label>
-        <input type="range" id="sensRange" min="0.5" max="3.0" step="0.1" value="1.5">
-        <div style="font-size:0.8rem; color:#888;">
-            左：強く振らないと鳴らない <br> 右：少しの揺れで鳴る
-        </div>
-        <div style="margin-top:15px; border-top:1px solid #444; padding-top:10px;">
-            <div id="debug">揺れ: 0.00</div>
-            <button class="test-btn" id="forceMelody">🎵 音出しテスト (押している間だけ全開)</button>
-        </div>
-    </div>
-
-    <button id="playBtn">DJ START</button>
+<body style="background:#111;color:#fff;font-family:sans-serif;padding:20px;">
+    <h2>Walk Tempo Reactive Beat</h2>
+    <button id="playBtn" style="padding:15px 30px;">Start</button>
 
     <script>
     // ---------------------------
-    // 1. Motion Logic
+    // Motion Buffer (標準偏差計算用)
     // ---------------------------
-    const BUFFER_SIZE = 20;
+    const BUFFER_SIZE = 25;
     const motionBuffer = [];
-    let smoothedStd = 0;
-    let sensitivity = 1.5; // 感度倍率
 
     function handleMotion(event) {
         const g = event.accelerationIncludingGravity;
@@ -59,6 +25,9 @@
         if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
     }
 
+    // ---------------------------
+    // 標準偏差を計算
+    // ---------------------------
     function calcStd() {
         if (motionBuffer.length === 0) return 0;
         const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
@@ -67,174 +36,115 @@
     }
 
     // ---------------------------
-    // 2. Tone.js Setup
+    // Tone.js Setup
     // ---------------------------
-    let kick, hihat, chordSynth, filter;
-    let isPlaying = false;
-    let isForced = false; // テストボタン用
+    let kick, snare, hihat, isPlaying=false;
 
     function setupAudio() {
-        // マスターフィルター
-        filter = new Tone.Filter({
-            type: "lowpass",
-            frequency: 200, 
-            Q: 1
+        // Kick
+        kick = new Tone.MembraneSynth({
+            pitchDecay: 0.05,
+            octaves: 4,
+            envelope: { attack: 0.001, decay: 0.4, sustain: 0 }
         }).toDestination();
 
-        // 1. Kick (常時)
-        kick = new Tone.MembraneSynth({
-            volume: 0,
-        }).connect(filter);
+        // Snare
+        snare = new Tone.NoiseSynth({
+            noise: { type: "white" },
+            envelope: { attack: 0.001, decay: 0.15, sustain: 0 }
+        }).toDestination();
 
-        // 2. Hi-hat
+        // Hi-hat
         hihat = new Tone.MetalSynth({
-            volume: -60, 
-            frequency: 200,
-            envelope: { attack: 0.001, decay: 0.1, release: 0.01 },
+            frequency: 400,
+            envelope: { attack: 0.001, decay: 0.08, release: 0.05 },
             harmonicity: 5.1,
             modulationIndex: 32,
+            resonance: 4000,
             octaves: 1.5
-        }).connect(filter);
-
-        // 3. Chord (メロディ) - 音量を上げやすく調整
-        chordSynth = new Tone.PolySynth(Tone.Synth, {
-            volume: -60,
-            maxPolyphony: 4, // 負荷軽減
-            oscillator: { type: "sawtooth" }, // より抜けの良い音に変更
-            envelope: { attack: 0.05, decay: 0.2, sustain: 0.3, release: 1 }
-        }).connect(filter);
+        }).toDestination();
     }
 
     // ---------------------------
-    // 3. Music Loop
+    // BPM は 100〜130 の範囲にマッピング
+    // 標準偏差 std: 0.05 ~ 0.35 あたりを想定
+    // ---------------------------
+    function stdToBpm(std) {
+        const minStd = 0.05;
+        const maxStd = 0.35;
+
+        let t = (std - minStd) / (maxStd - minStd);
+        t = Math.max(0, Math.min(1, t)); // clamp
+        return 100 + t * 30; // 100〜130 BPM
+    }
+
+    // ---------------------------
+    // Loop（歩行ペースでテンポ変化）
     // ---------------------------
     function startLoop() {
-        // 少し明るめのコード進行 (Fmaj7 -> G7 -> Em7 -> Am7)
-        const chords = [
-            ["F3", "A3", "C4", "E4"], 
-            ["G3", "B3", "D4", "F4"],
-            ["E3", "G3", "B3", "D4"],
-            ["A3", "C4", "E4", "G4"] 
-        ];
         let step = 0;
 
-        const loop = new Tone.Loop(time => {
-            // Kick (4つ打ち)
-            kick.triggerAttackRelease("C2", "8n", time);
-            
-            // Hihat (裏打ち)
-            hihat.triggerAttackRelease("32n", time + Tone.Time("8n").toSeconds());
+        Tone.Transport.scheduleRepeat((time)=>{
+            const std = calcStd();
+            const targetBpm = stdToBpm(std);
 
-            // Chord (4拍に1回ジャーンと鳴らす＝分かりやすく)
-            if (step % 4 === 0) {
-                const currentChord = chords[(step / 4) % 4];
-                chordSynth.triggerAttackRelease(currentChord, "2n", time);
+            // BPMを滑らかに変化させる
+            Tone.Transport.bpm.rampTo(targetBpm, 0.5);
+
+            const walking = std > 0.12;
+            const hardWalk = std > 0.25;
+
+            // Kick（常に）
+            if (step % 2 === 0) kick.triggerAttackRelease("C2","8n",time);
+
+            // Snare（歩くと追加）
+            if (walking && step % 4 === 2) {
+                snare.triggerAttackRelease("8n", time);
             }
-            
-            step++;
-        }, "8n"); // 8分音符単位で進行
 
-        Tone.Transport.bpm.value = 124; 
+            // Hi-hat（歩行強さで変化）
+            if (hardWalk) {
+                hihat.triggerAttackRelease("16n", time);
+            } else if (walking && step % 2 === 1) {
+                hihat.triggerAttackRelease("16n", time);
+            }
+
+            step++;
+        }, "8n");
+
         Tone.Transport.start();
-        loop.start(0);
     }
 
     // ---------------------------
-    // 4. Update Logic
+    // Update loop
     // ---------------------------
     function update() {
         if (!isPlaying) return;
         requestAnimationFrame(update);
-
-        // 感度スライダーの値を取得
-        sensitivity = parseFloat(document.getElementById('sensRange').value);
-
-        // 揺れの計算
-        let rawStd = calcStd();
-        
-        // テストボタンが押されていれば強制的にMAXとみなす
-        if (isForced) rawStd = 1.0;
-
-        // 感度を適用
-        const adjustedStd = rawStd * sensitivity;
-
-        // スムージング
-        smoothedStd += (adjustedStd - smoothedStd) * 0.1;
-
-        // 表示更新
-        document.getElementById('debug').innerText = "揺れ: " + smoothedStd.toFixed(2) + " (感度: x" + sensitivity + ")";
-        const statusEl = document.getElementById('status');
-        const subStatusEl = document.getElementById('subStatus');
-
-        // --- MIXING LOGIC (しきい値を緩和) ---
-        
-        // フィルターは常に揺れに連動 (0.1から反応開始)
-        const freq = mapRange(smoothedStd, 0.1, 1.0, 300, 15000);
-        filter.frequency.rampTo(Math.max(300, Math.min(15000, freq)), 0.1);
-
-        // 音量コントロール
-        if (smoothedStd < 0.2) {
-            // Level 0: ほぼ停止
-            statusEl.innerText = "STOP";
-            statusEl.style.color = "#555";
-            subStatusEl.innerText = "キックのみ";
-
-            hihat.volume.rampTo(-60, 0.2);
-            chordSynth.volume.rampTo(-60, 0.2);
-
-        } else if (smoothedStd < 0.5) {
-            // Level 1: 歩き (少しメロディも混ぜる！)
-            statusEl.innerText = "WALK";
-            statusEl.style.color = "#00bfff";
-            subStatusEl.innerText = "+ハイハット & うっすらメロディ";
-
-            hihat.volume.rampTo(-10, 0.2); 
-            // ★変更点: ここで少しメロディを入れる (-20dbくらい)
-            chordSynth.volume.rampTo(-20, 0.2);
-
-        } else {
-            // Level 2: 元気よく歩く (全開)
-            statusEl.innerText = "RUN!!";
-            statusEl.style.color = "#ff0055";
-            subStatusEl.innerText = "フルボリューム！";
-
-            hihat.volume.rampTo(-10, 0.2);
-            chordSynth.volume.rampTo(-8, 0.2); // メイン音量
-        }
-    }
-
-    function mapRange(value, inMin, inMax, outMin, outMax) {
-        return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
+        // 必要なら画面表示更新など
     }
 
     // ---------------------------
-    // 5. Events
+    // Start Button
     // ---------------------------
-    
-    // 音出しテストボタン
-    const testBtn = document.getElementById('forceMelody');
-    testBtn.addEventListener('mousedown', () => isForced = true);
-    testBtn.addEventListener('mouseup', () => isForced = false);
-    testBtn.addEventListener('touchstart', (e) => { e.preventDefault(); isForced = true; });
-    testBtn.addEventListener('touchend', (e) => { e.preventDefault(); isForced = false; });
-
     document.getElementById('playBtn').addEventListener('click', async ()=>{
-        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-            try {
-                const p = await DeviceMotionEvent.requestPermission();
-                if (p !== 'granted') alert("センサー許可が必要です");
-            } catch (e) {}
+        if (DeviceMotionEvent?.requestPermission) {
+            const s = await DeviceMotionEvent.requestPermission();
+            if(s!=='granted') return alert("センサー許可が必要です");
         }
+
         window.addEventListener('devicemotion', handleMotion);
-        
+
         await Tone.start();
         setupAudio();
         startLoop();
-        
+
         isPlaying = true;
         document.getElementById('playBtn').style.display = 'none';
+
         update();
     });
+
     </script>
 </body>
 </html>
