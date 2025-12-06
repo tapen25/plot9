@@ -246,12 +246,12 @@
 
             // 2. Bass (Whiplash的グルーヴ)
             // 裏拍を意識したパターン
-            if (step === 0) bass.triggerAttackRelease("F2", "16n", time);
-            if (step === 2) bass.triggerAttackRelease("F2", "16n", time);
-            if (step === 3) bass.triggerAttackRelease("F2", "16n", time);
-            if (step === 7) bass.triggerAttackRelease("F2", "16n", time); // syncopation
-            if (step === 10) bass.triggerAttackRelease("F1", "8n", time); // low drop
-            if (step === 14) bass.triggerAttackRelease("Ab2", "16n", time);
+            if (step === 0) bass.triggerAttackRelease("Eb2", "16n", time);
+            if (step === 2) bass.triggerAttackRelease("Bb2", "16n", time);
+            if (step === 3) bass.triggerAttackRelease("Eb2", "16n", time);
+            if (step === 7) bass.triggerAttackRelease("C#3", "16n", time); // syncopation
+            if (step === 10) bass.triggerAttackRelease("Ab2", "8n", time); // low drop
+            if (step === 14) bass.triggerAttackRelease("Bb2", "16n", time);
 
             // 3. Hihat (16 beat)
             if (step % 2 === 0) hihat.triggerAttackRelease("16n", time); // down
