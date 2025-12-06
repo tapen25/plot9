@@ -30,59 +30,43 @@
     }
 
     // Synth
-    let kick, snare, isPlaying = false;
+    //let kick, snare, isPlaying = false;
 
-    function setupAudio() {
-        // Kick
-        kick = new Tone.MembraneSynth({
-            pitchDecay: 0.05,
-            octaves: 4,
-            envelope: { attack: 0.001, decay: 0.4, sustain: 0 }
-        }).toDestination();
+    // …前略（motion 部分は変えず）…
 
-        // Snare
-        snare = new Tone.NoiseSynth({
-            noise: { type: "white" },
-            envelope: { attack: 0.001, decay: 0.12, sustain: 0 }
-        }).toDestination();
-    }
+function setupAudio() {
+    // Kick
+    kick = new Tone.MembraneSynth({
+        pitchDecay: 0.03,
+        octaves: 3,
+        envelope: { attack: 0.001, decay: 0.3, sustain: 0 }
+    }).toDestination();
 
-    // ---- BPM Mapping ----
-    // 標準偏差 std を 0.05〜0.35 → BPM 100〜130 にマッピング
-    function stdToBpm(std) {
-        const minStd = 0.05;
-        const maxStd = 0.35;
-        let t = (std - minStd) / (maxStd - minStd);
-        t = Math.max(0, Math.min(1, t)); // clamp
-        return 100 + t * 30; // BPM 100~130
-    }
+    // Bass (サブベース風)
+    bass = new Tone.Synth({
+        oscillator: { type: "sine" },
+        envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.5 }
+    }).toDestination();
+}
 
-    // ---- Loop ----
-    function startLoop() {
-        let step = 0;
+function startLoop() {
+    let step = 0;
+    Tone.Transport.scheduleRepeat((time)=>{
+        const std = calcStd();
+        const targetBpm = stdToBpm(std);
+        Tone.Transport.bpm.rampTo(targetBpm, 2.0);
 
-        Tone.Transport.scheduleRepeat((time) => {
-            const std = calcStd();
-            const targetBpm = stdToBpm(std);
+        // Kick：定期
+        if (step % 2 === 0) {
+            kick.triggerAttackRelease("C2", "8n", time);
+            // Bass を少しずらして入れると「Whiplash的ベース感」
+            bass.triggerAttackRelease("C1", "4n", time + 0.05);
+        }
 
-            // ★ BPMを超なめらかに変化（2秒かけて追従）
-            Tone.Transport.bpm.rampTo(targetBpm, 2.0);
-
-            const walking = std > 0.12;
-
-            // Kick
-            if (step % 2 === 0) kick.triggerAttackRelease("C2", "8n", time);
-
-            // Snare（歩いている時だけ）
-            if (walking && step % 4 === 2) {
-                snare.triggerAttackRelease("8n", time);
-            }
-
-            step++;
-        }, "8n");
-
-        Tone.Transport.start();
-    }
+        step++;
+    }, "8n");
+    Tone.Transport.start();
+}
 
     function update() {
         if (!isPlaying) return;
