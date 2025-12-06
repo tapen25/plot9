@@ -3,19 +3,22 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Walk Reactive Beat 3D</title>
+    <title>Walk Reactive Beat (Filter)</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         body { background:#111; color:#fff; font-family:sans-serif; padding:20px; text-align:center; }
         h2 { margin-bottom: 10px; }
         #playBtn { padding:15px 40px; font-size:1.2rem; border-radius:30px; border:none; background:#007bff; color:white; cursor:pointer; }
         #debug { margin-top: 20px; font-size: 1.2rem; color: #0f0; }
-        .description { font-size: 0.9rem; color: #ccc; margin-bottom: 20px; }
+        .description { font-size: 0.9rem; color: #ccc; margin-bottom: 20px; line-height: 1.6; }
     </style>
 </head>
 <body>
     <h2>Walk Reactive Beat</h2>
-    <p class="description">歩くと音が頭の周りを回転します</p>
+    <p class="description">
+        歩くと音がクリアになり、<br>
+        止まると音がこもります。
+    </p>
     
     <div id="debug">Sensor: 0.00</div>
     <br>
@@ -23,16 +26,15 @@
 
     <script>
     // ---------------------------
-    // 1. Motion Buffer (標準偏差計算用)
+    // 1. Motion Buffer (動きの検知)
     // ---------------------------
     const BUFFER_SIZE = 20;
     const motionBuffer = [];
-    let currentStd = 0;       // 現在の標準偏差
+    let currentStd = 0;       // 現在の動きの激しさ
     let smoothedStd = 0;      // 滑らかにした値
-    let pannerAngle = 0;      // 回転角度
 
     function handleMotion(event) {
-        // 重力込みの加速度を取得 (Android/iOS両対応のためこれ推奨)
+        // 重力込みの加速度
         const g = event.accelerationIncludingGravity;
         if(!g) return;
 
@@ -43,7 +45,7 @@
         if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
     }
 
-    // 標準偏差を計算する関数
+    // 標準偏差（揺れの大きさ）を計算
     function calcStd() {
         if (motionBuffer.length === 0) return 0;
         const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
@@ -54,31 +56,25 @@
     // ---------------------------
     // 2. Tone.js Setup
     // ---------------------------
-    let kick, hihat, panner, isPlaying=false;
+    let kick, hihat, filter, isPlaying=false;
 
     function setupAudio() {
-        // ★ Panner3Dの設定
-        // HRTF: 人間の頭部伝達関数を使ったリアルな3D音響
-        panner = new Tone.Panner3D({
-            panningModel: "HRTF",
-            positionX: 0,
-            positionY: 0,
-            positionZ: -1, // 初期位置は正面
+        // ★ 変更点: Panner3Dの代わりにFilterを使用
+        // frequency: 初期値は低く（こもった状態）にしておく
+        filter = new Tone.Filter({
+            type: "lowpass",
+            frequency: 200, 
+            Q: 1 // レゾナンス
         }).toDestination();
 
-        // Listener（聴き手）は原点に固定
-        Tone.Listener.positionX.value = 0;
-        Tone.Listener.positionY.value = 0;
-        Tone.Listener.positionZ.value = 0;
-
-        // Kick (重低音)
+        // Kick (重低音) -> Filterへ接続
         kick = new Tone.MembraneSynth({
             volume: 0,
             octaves: 4,
             envelope: { attack: 0.001, decay: 0.4, sustain: 0 }
-        }).connect(panner);
+        }).connect(filter);
 
-        // Hi-hat (高音・リズム)
+        // Hi-hat (高音) -> Filterへ接続
         hihat = new Tone.MetalSynth({
             volume: -10,
             frequency: 200,
@@ -87,90 +83,77 @@
             modulationIndex: 32,
             resonance: 4000,
             octaves: 1.5
-        }).connect(panner);
+        }).connect(filter);
     }
 
     // ---------------------------
-    // 3. Music Loop (音の「発音」を担当)
+    // 3. Music Loop
     // ---------------------------
     function startLoop() {
-        // シンプルなリズムを刻むだけ。
-        // 音の変化（回転など）は update() で行うため、ここはシンプルにする。
         const loop = new Tone.Loop(time => {
             // ドン（表）
             kick.triggerAttackRelease("C2", "8n", time);
             
             // チッ（裏）
-            // ハイハットは少し遅らせて鳴らす（16分音符2つ分 = 8分音符裏）
             hihat.triggerAttackRelease("32n", time + Tone.Time("8n").toSeconds());
-        }, "4n"); // 4分音符間隔でループ
+        }, "4n");
 
-        Tone.Transport.bpm.value = 110; // 歩きやすいテンポ
+        Tone.Transport.bpm.value = 110; 
         Tone.Transport.start();
         loop.start(0);
     }
 
     // ---------------------------
-    // 4. Animation Loop (音の「移動」を担当)
+    // 4. Animation Loop (音の変化を担当)
     // ---------------------------
     function update() {
         if (!isPlaying) return;
         requestAnimationFrame(update);
 
-        // 標準偏差を計算
+        // センサー値の計算
         currentStd = calcStd();
-
-        // スムージング処理（値が急に変わると音が飛ぶのを防ぐ）
+        // スムージング（急激な変化を防ぐ）
         smoothedStd += (currentStd - smoothedStd) * 0.1;
 
-        // デバッグ表示更新
+        // デバッグ表示
         document.getElementById('debug').innerText = "Sensor: " + smoothedStd.toFixed(3);
 
         // --- インタラクション判定 ---
-        const WALK_THRESHOLD = 0.5; // しきい値（スマホの機種や歩き方で調整）
+        const WALK_THRESHOLD = 0.5; // 歩行判定のしきい値
 
+        // ★ 変更点: 3D回転をやめ、フィルターの開閉を行う
+        let targetFreq;
+        
         if (smoothedStd > WALK_THRESHOLD) {
-            // ★歩いている時：回転させる
-            // 揺れが大きいほど速く回る (0.05は基本速度)
-            pannerAngle += 0.05 + (smoothedStd * 0.02);
-
-            // 半径2mの円周上を回る
-            const radius = 2;
-            const x = Math.sin(pannerAngle) * radius;
-            const z = Math.cos(pannerAngle) * radius;
-
-            // 滑らかに移動 (0.1秒かけて移動)
-            panner.positionX.rampTo(x, 0.1);
-            panner.positionZ.rampTo(z, 0.1);
-
+            // 歩いている時：フィルターを全開にする（音がクリアに）
+            targetFreq = 20000; 
         } else {
-            // ★止まっている時：正面に戻す
-            panner.positionX.rampTo(0, 0.5);
-            panner.positionZ.rampTo(-1, 0.5);
+            // 止まっている時：フィルターを閉じる（音がこもる）
+            // 完全に消音せず、低音だけ残すとかっこいい
+            targetFreq = 300; 
         }
+
+        // 滑らかに周波数を変化させる (0.2秒かけて変化)
+        // rampToを使うとプチノイズを防げる
+        filter.frequency.rampTo(targetFreq, 0.2);
     }
 
     // ---------------------------
     // 5. Start Button & Permission
     // ---------------------------
     document.getElementById('playBtn').addEventListener('click', async ()=>{
-        // iOS 13+ センサー許可リクエスト
+        // iOS センサー許可
         if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
             try {
                 const permission = await DeviceMotionEvent.requestPermission();
                 if (permission !== 'granted') {
-                    alert("センサーの利用が許可されませんでした。");
+                    alert("センサー許可が必要です");
                     return;
                 }
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
-        // センサーイベント登録
         window.addEventListener('devicemotion', handleMotion);
-
-        // Tone.js開始
         await Tone.start();
         
         setupAudio();
@@ -179,10 +162,8 @@
         isPlaying = true;
         document.getElementById('playBtn').style.display = 'none';
         
-        // アニメーションループ開始
         update();
     });
-
     </script>
 </body>
 </html>
