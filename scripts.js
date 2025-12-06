@@ -1,59 +1,48 @@
 // ==========================================
 // 1. 設定と変数の初期化
 // ==========================================
-const BUFFER_SIZE = 20; 
-const motionBuffer = []; 
+const BUFFER_SIZE = 20; // 過去20フレーム分(約0.3秒)のデータを保持
+const motionBuffer = []; // 加速度の大きさを溜める配列
 let isPlaying = false;
 
-let currentShake = 0; 
-let pannerAngle = 0;  
-let smoothedShake = 0; 
+// インタラクション用変数
+let currentShake = 0; // 現在の揺れ（標準偏差）
+let pannerAngle = 0;  // 音が回る角度
+let smoothedShake = 0; // 滑らかにした揺れの値
 
-// HTMLの表示要素（デバッグ用）
-const shakeDisplay = document.getElementById('shakeValue');
-
-// Tone.js オブジェクト
+// Tone.jsの準備
+// ユーザー（聴き手）は原点(0,0,0)に固定
 const listener = new Tone.Listener(); 
+// 音源（3Dパンナー）
 const panner = new Tone.Panner3D({
     positionX: 0,
     positionY: 0,
-    positionZ: -1, 
-    panningModel: "HRTF" 
+    positionZ: -1, // 最初は正面
+    panningModel: "HRTF" // ヘッドホンで立体的聞こえる設定
 }).toDestination();
 
-// 音源（シンプルなキックとハイハット風）
-// ※音がシンプルすぎると感じる場合はここを調整
-const membrane = new Tone.MembraneSynth().connect(panner);
-const metal = new Tone.MetalSynth({
-    frequency: 200,
-    envelope: {
-        attack: 0.001,
-        decay: 0.1,
-        release: 0.01
-    },
-    harmonicity: 5.1,
-    modulationIndex: 32,
-    resonance: 4000,
-    octaves: 1.5
-}).connect(panner);
-metal.volume.value = -10; // 音量調整
-
-// ループ作成 (4分音符ごとのキック、裏拍のハイハット)
+// 音源（シンプルなループ）
+// ここはMembraneSynthや既存のコードに合わせてください
+const synth = new Tone.MembraneSynth().connect(panner);
 const loop = new Tone.Loop(time => {
-    membrane.triggerAttackRelease("C2", "8n", time);
-    // 裏拍で金属音
-    metal.triggerAttackRelease("32n", time + Tone.Time("8n").toSeconds());
+    synth.triggerAttackRelease("C2", "8n", time);
 }, "4n");
 
 
 // ==========================================
-// 2. 標準偏差の計算ロジック
+// 2. 標準偏差の計算ロジック (ここが核心)
 // ==========================================
 function getStandardDeviation(array) {
     const n = array.length;
     if (n === 0) return 0;
+
+    // 平均値の計算
     const mean = array.reduce((a, b) => a + b) / n;
+
+    // 分散（平均との差の2乗の平均）の計算
     const variance = array.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / n;
+
+    // 標準偏差（分散の平方根）
     return Math.sqrt(variance);
 }
 
@@ -65,7 +54,7 @@ function handleMotion(event) {
     const g = event.accelerationIncludingGravity;
     if (!g) return;
 
-    // x, y, z の合成ベクトル（重力含む）
+    // 重力込みのベクトルの長さ（静止時は約9.8）
     const mag = Math.sqrt((g.x || 0) ** 2 + (g.y || 0) ** 2 + (g.z || 0) ** 2);
     
     motionBuffer.push(mag);
@@ -80,34 +69,36 @@ function update() {
     requestAnimationFrame(update);
     if (!isPlaying) return;
 
-    // 揺れの計算
+    // バッファから標準偏差（揺れの大きさ）を計算
     currentShake = getStandardDeviation(motionBuffer);
 
-    // スムージング（値を滑らかにする）
+    // 【重要】スムージング処理
+    // 急に値が変わると音が飛ぶので、少しずつ目標値に近づける
+    // 0.1 は追従速度（小さいほど滑らかだが遅れる）
     smoothedShake += (currentShake - smoothedShake) * 0.1;
-    
-    // 画面に数値を表示（スマホでの確認用）
-    if(shakeDisplay) shakeDisplay.innerText = smoothedShake.toFixed(2);
 
-    // === 音の制御ロジック ===
-    // 閾値：これを調整して「歩いた時だけ回る」ようにする
-    const WALK_THRESHOLD = 0.8; 
+    // === 音の制御ロジック (Trigger -> Reaction) ===
+    
+    // 閾値設定（0.5以上なら「歩いている」とみなすなど調整してください）
+    const WALK_THRESHOLD = 0.5;
 
     if (smoothedShake > WALK_THRESHOLD) {
-        // 歩行中：回転させる
-        // 揺れが強いほど速く回る
-        pannerAngle += 0.05 + (smoothedShake * 0.01);
+        // 歩いている時：音が頭の周りを回る
+        // 揺れが大きいほど回転速度が上がる（係数0.1は調整可）
+        pannerAngle += 0.05 + (smoothedShake * 0.02);
         
-        const radius = 2; // 半径
+        // 座標計算 (半径2メートルで回転)
+        const radius = 2;
         const x = Math.sin(pannerAngle) * radius;
         const z = Math.cos(pannerAngle) * radius;
         
+        // Pannerに適用
         panner.positionX.rampTo(x, 0.1);
         panner.positionZ.rampTo(z, 0.1);
         
     } else {
-        // 静止中：正面に戻す
-        panner.positionX.rampTo(0, 0.5);
+        // 止まっている時：音は正面に戻る
+        panner.positionX.rampTo(0, 0.5); // 0.5秒かけてゆっくり戻る
         panner.positionZ.rampTo(-1, 0.5);
     }
 }
@@ -121,25 +112,21 @@ async function startAudioSystem() {
     Tone.Transport.start();
     loop.start(0);
     
-    // iOS 13+ などでのセンサー許可リクエスト
+    // センサー許可リクエスト
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        try {
-            const permission = await DeviceMotionEvent.requestPermission();
-            if (permission !== 'granted') {
-                alert("センサーの利用が許可されませんでした。");
-                return;
-            }
-        } catch (e) {
-            console.error(e);
+        const permission = await DeviceMotionEvent.requestPermission();
+        if (permission !== 'granted') {
+            alert("センサー許可が必要です");
+            return;
         }
     }
     
     window.addEventListener('devicemotion', handleMotion);
     isPlaying = true;
-    update();
+    update(); // アニメーションループ開始
 }
 
 document.getElementById('playBtn').addEventListener('click', () => {
     startAudioSystem();
-    document.getElementById('playBtn').innerText = "Running...";
+    document.getElementById('playBtn').style.display = 'none';
 });
