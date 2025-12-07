@@ -109,7 +109,7 @@ body {
         currentBPM += (targetBPM - currentBPM) * 0.01;
         Tone.Transport.bpm.value = currentBPM;
 
-        currentEnergy += (targetEnergy - currentEnergy) * 0.01;
+        currentEnergy += (targetEnergy - currentEnergy) * 0.008;
 
         // 表示更新
         document.getElementById("bpmDisplay").innerText = currentBPM.toFixed(0);
