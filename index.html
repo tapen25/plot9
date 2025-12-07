@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Layered Interactive Beat</title>
+    <title>Interactive Beat: Layers</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         body {
-            background-color: #000;
-            color: #ddd;
-            font-family: 'Courier New', sans-serif;
+            background-color: #111;
+            color: #eee;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -17,235 +17,312 @@
             height: 100vh;
             margin: 0;
             overflow: hidden;
+            user-select: none;
         }
         #playBtn {
-            padding: 20px 40px;
+            padding: 20px 50px;
             font-size: 1.2rem;
-            background: transparent;
-            color: #00ffcc;
-            border: 2px solid #00ffcc;
-            border-radius: 4px;
+            background: #fff;
+            color: #000;
+            border: none;
+            border-radius: 30px;
             cursor: pointer;
-            transition: 0.3s;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+            transition: 0.2s;
+            z-index: 10;
         }
         #playBtn:active {
-            background: #00ffcc;
-            color: #000;
+            transform: scale(0.95);
         }
         #info {
             position: absolute;
-            top: 20px;
+            top: 30px;
             width: 100%;
             text-align: center;
             pointer-events: none;
         }
-        .layer-indicator {
+        h1 {
+            font-size: 3rem;
+            margin: 0;
+            font-weight: 200;
+        }
+        p { margin-top: 5px; opacity: 0.6; }
+
+        .layer-container {
             display: flex;
-            gap: 10px;
-            margin-top: 20px;
+            gap: 15px;
+            margin-top: 40px;
         }
         .layer {
-            width: 50px;
-            height: 10px;
-            background: #333;
-            border: 1px solid #555;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            opacity: 0.2;
+            transition: opacity 0.3s, transform 0.3s;
         }
+        .layer-box {
+            width: 60px;
+            height: 15px;
+            background: #444;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            transition: background 0.2s;
+        }
+        .layer-name {
+            font-size: 0.8rem;
+            font-weight: bold;
+            letter-spacing: 1px;
+        }
+        
+        /* Active States */
         .active {
-            background: #00ffcc;
-            box-shadow: 0 0 10px #00ffcc;
+            opacity: 1;
+            transform: translateY(-5px);
         }
+        .active .layer-box {
+            box-shadow: 0 0 15px currentColor;
+        }
+        #l1.active .layer-box { background: #ff4757; color: #ff4757; } /* Kick */
+        #l2.active .layer-box { background: #eccc68; color: #eccc68; } /* Hihat */
+        #l3.active .layer-box { background: #2ed573; color: #2ed573; } /* Bass */
+        #l4.active .layer-box { background: #1e90ff; color: #1e90ff; } /* Snare */
+
         #visual {
-            width: 100px;
-            height: 100px;
-            background: rgba(0, 255, 204, 0.1);
+            width: 120px;
+            height: 120px;
+            background: radial-gradient(circle, #fff 0%, rgba(255,255,255,0) 70%);
             border-radius: 50%;
-            transition: transform 0.2s cubic-bezier(0.1, 0.7, 1.0, 0.1);
+            opacity: 0.8;
+            transition: transform 0.1s linear; /* Smooth scaling */
         }
     </style>
 </head>
 <body>
 
     <div id="info">
-        <div>BPM: <span id="bpmDisplay">110.0</span></div>
-        <div style="font-size: 0.8em; opacity: 0.7;">Keep moving to build layers</div>
+        <div>BPM</div>
+        <h1 id="bpmDisplay">---</h1>
+        <p>Shake device to build layers</p>
     </div>
 
     <div id="visual"></div>
 
-    <div class="layer-indicator">
-        <div id="l1" class="layer active"></div>
-        <div id="l2" class="layer"></div>
-        <div id="l3" class="layer"></div>
-        <div id="l4" class="layer"></div>
+    <div class="layer-container">
+        <div id="l1" class="layer">
+            <div class="layer-box"></div>
+            <span class="layer-name">KICK</span>
+        </div>
+        <div id="l2" class="layer">
+            <div class="layer-box"></div>
+            <span class="layer-name">HIHAT</span>
+        </div>
+        <div id="l3" class="layer">
+            <div class="layer-box"></div>
+            <span class="layer-name">BASS</span>
+        </div>
+        <div id="l4" class="layer">
+            <div class="layer-box"></div>
+            <span class="layer-name">SNARE</span>
+        </div>
     </div>
 
     <br><br>
-    <button id="playBtn">INITIATE</button>
+    <button id="playBtn">TAP TO START</button>
 
 <script>
     // --- Motion Logic ---
     let motionBuffer = [];
-    const BUFFER_SIZE = 50; 
-
-    let currentBPM = 110;
-    let targetBPM = 110;
-    
-    let currentEnergy = 0;
+    const BUFFER_SIZE = 40; 
+    let currentBPM = 100;
+    let targetBPM = 100;
+    let currentEnergy = 0; // 0.0 to 1.0
     let targetEnergy = 0;
 
     function handleMotion(event) {
         const g = event.accelerationIncludingGravity;
         if (!g) return;
+        
+        // 重力込みの加速度から変化量を簡易的に取得
+        // ※ 本来はハイパスフィルタなどを通すが、簡易的にベクトルの大きさで判定
         const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
         motionBuffer.push(mag);
         if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
     }
 
-    function computeStepPace() {
+    function computeState() {
         if (motionBuffer.length < BUFFER_SIZE) return;
 
-        const mean = motionBuffer.reduce((a,b)=>a+b,0)/motionBuffer.length;
-        const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0)/motionBuffer.length;
+        // 標準偏差(分散)を計算＝「揺れ」の激しさ
+        const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
+        const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0) / motionBuffer.length;
         const sd = Math.sqrt(variance);
 
-        let rawTargetBPM = 110 + (sd * 15); 
-        targetBPM = Math.max(110, Math.min(138, rawTargetBPM));
-        targetEnergy = Math.min(sd / 2.5, 1.0);
+        // --- パラメータ調整 ---
+        // SDが小さい(静止)と0に近く、激しく振ると5~10くらいになる想定
+        
+        // BPM: 揺れに応じて 100 ~ 160 の間で変動
+        let rawBPM = 100 + (sd * 12); 
+        targetBPM = Math.max(100, Math.min(160, rawBPM));
+
+        // Energy: 0.0 ~ 1.0 (レイヤーの解放レベル)
+        // 感度調整: sdが 6.0 を超えたらMAXになるように設定
+        targetEnergy = Math.min(sd / 6.0, 1.0);
     }
 
-    function updateParams() {
-        requestAnimationFrame(updateParams);
-        computeStepPace();
+    function updateVisuals() {
+        requestAnimationFrame(updateVisuals);
+        computeState();
 
-        currentBPM += (targetBPM - currentBPM) * 0.002;
+        // 値をスムージングして急激な変化を抑える
+        currentBPM += (targetBPM - currentBPM) * 0.05;
         Tone.Transport.bpm.value = currentBPM;
 
-        currentEnergy += (targetEnergy - currentEnergy) * 0.01;
+        currentEnergy += (targetEnergy - currentEnergy) * 0.03;
 
-        document.getElementById("bpmDisplay").innerText = currentBPM.toFixed(1);
+        // 表示更新
+        document.getElementById("bpmDisplay").innerText = currentBPM.toFixed(0);
         
-        const scale = 1 + currentEnergy * 2;
+        // ビジュアルの鼓動
+        const scale = 0.8 + currentEnergy * 1.5;
         document.getElementById("visual").style.transform = `scale(${scale})`;
 
+        // レイヤー表示の切り替え
         const layers = [
-            document.getElementById("l1"),
-            document.getElementById("l2"),
-            document.getElementById("l3"),
-            document.getElementById("l4")
+            document.getElementById("l1"), // Kick
+            document.getElementById("l2"), // Hihat
+            document.getElementById("l3"), // Bass
+            document.getElementById("l4")  // Snare
         ];
+        
+        // しきい値設定 (0.1, 0.3, 0.6, 0.8)
+        const thresholds = [0.05, 0.3, 0.6, 0.8];
+        
         layers.forEach((el, i) => {
-            if (currentEnergy > i * 0.25) el.classList.add("active");
+            if (currentEnergy > thresholds[i]) el.classList.add("active");
             else el.classList.remove("active");
         });
     }
 
     // --- Sound Design ---
-    let kick, bass, hihat, clap, lead;
-    let volHihat, volClap, volLead;
+    let kick, bass, snare, hihat;
+    let volKick, volBass, volSnare, volHihat;
 
     function setupAudio() {
-        const masterLimit = new Tone.Limiter(-1).toDestination();
+        const masterLimiter = new Tone.Limiter(-2).toDestination();
 
-        // 1. KICK
+        // 1. KICK (Deep & Punchy)
         kick = new Tone.MembraneSynth({
             pitchDecay: 0.05,
-            octaves: 4,
+            octaves: 6,
             oscillator: { type: "sine" },
             envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4 }
-        }).connect(masterLimit);
-        kick.volume.value = 0;
+        }).connect(masterLimiter);
+        volKick = new Tone.Volume(-60).connect(masterLimiter);
+        kick.disconnect(); kick.connect(volKick);
 
-        // 2. BASS
-        bass = new Tone.MonoSynth({
-            oscillator: { type: "sawtooth" },
-            envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 },
-            filterEnvelope: { attack: 0.001, decay: 0.2, baseFrequency: 150, octaves: 2.5, exponent: 2 }
-        }).connect(masterLimit);
-        bass.volume.value = -3;
-
-        // 3. HIHAT
+        // 2. HIHAT (Noise with filtering)
         hihat = new Tone.NoiseSynth({
             noise: { type: "white" },
-            envelope: { attack: 0.001, decay: 0.1, sustain: 0 } // 初期値
-        }).connect(masterLimit);
-        volHihat = new Tone.Volume(-60).connect(masterLimit);
+            envelope: { attack: 0.001, decay: 0.1, sustain: 0 }
+        });
+        const hhFilter = new Tone.Filter(8000, "highpass").connect(masterLimiter);
+        volHihat = new Tone.Volume(-60).connect(hhFilter);
         hihat.disconnect(); hihat.connect(volHihat);
 
-        // 4. CLAP/SNARE
-        clap = new Tone.NoiseSynth({
+        // 3. BASS (Fat MonoSynth)
+        bass = new Tone.MonoSynth({
+            oscillator: { type: "sawtooth" },
+            filter: { Q: 2, type: "lowpass", rollover: -12 },
+            envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.4 },
+            filterEnvelope: { attack: 0.01, decay: 0.2, baseFrequency: 100, octaves: 3, exponent: 2 }
+        }).connect(masterLimiter);
+        volBass = new Tone.Volume(-60).connect(masterLimiter);
+        bass.disconnect(); bass.connect(volBass);
+
+        // 4. SNARE (Sharp & Noisy)
+        snare = new Tone.NoiseSynth({
             noise: { type: "pink" },
-            envelope: { attack: 0.001, decay: 0.2, sustain: 0 }
-        }).connect(masterLimit);
-        volClap = new Tone.Volume(-60).connect(masterLimit);
-        clap.disconnect(); clap.connect(volClap);
+            envelope: { attack: 0.001, decay: 0.25, sustain: 0 }
+        });
+        // スネアに少しトーン（Body）を足すためのOscillator
+        const snareTone = new Tone.Oscillator({
+            frequency: 200,
+            type: "triangle",
+        }).start();
+        const snareEnv = new Tone.AmplitudeEnvelope({
+            attack: 0.001, decay: 0.1, sustain: 0
+        }).connect(masterLimiter);
+        snareTone.connect(snareEnv);
 
-        // 5. LEAD SYNTH
-        lead = new Tone.PolySynth(Tone.FMSynth, {
-            harmonicity: 3.0,
-            modulationIndex: 10,
-            oscillator: { type: "sine" },
-            envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 },
-            modulation: { type: "square" },
-            modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 }
-        }).connect(masterLimit);
-        const delay = new Tone.PingPongDelay("8n", 0.4).connect(masterLimit);
-        volLead = new Tone.Volume(-60).connect(delay);
-        lead.disconnect(); lead.connect(volLead);
+        volSnare = new Tone.Volume(-60).connect(masterLimiter);
+        snare.disconnect(); snare.connect(volSnare);
+        snareEnv.disconnect(); snareEnv.connect(volSnare); // BodyとNoiseをまとめる
 
 
-        // --- Loop Logic ---
+        // --- Sequencer Loop ---
         let step = 0;
         
         Tone.Transport.scheduleRepeat((time) => {
-            // 音量制御
-            if (currentEnergy > 0.25) volHihat.volume.rampTo(-10, 0.1);
-            else volHihat.volume.rampTo(-60, 0.5);
+            // Volume Control (Smooth fade in/out based on thresholds)
+            // しきい値を超えたら音量を上げ、下回ったら下げる
+            const fadeInTime = 0.1;
+            const fadeOutTime = 0.5;
 
-            if (currentEnergy > 0.5) volClap.volume.rampTo(-5, 0.1);
-            else volClap.volume.rampTo(-60, 0.5);
+            // L1: Kick (> 0.05)
+            if (currentEnergy > 0.05) volKick.volume.rampTo(0, fadeInTime);
+            else volKick.volume.rampTo(-60, fadeOutTime);
 
-            if (currentEnergy > 0.75) volLead.volume.rampTo(-8, 0.1);
-            else volLead.volume.rampTo(-60, 0.5);
+            // L2: Hihat (> 0.3)
+            if (currentEnergy > 0.3) volHihat.volume.rampTo(-10, fadeInTime);
+            else volHihat.volume.rampTo(-60, fadeOutTime);
+
+            // L3: Bass (> 0.6)
+            if (currentEnergy > 0.6) volBass.volume.rampTo(-4, fadeInTime);
+            else volBass.volume.rampTo(-60, fadeOutTime);
+
+            // L4: Snare (> 0.8)
+            if (currentEnergy > 0.8) volSnare.volume.rampTo(-5, fadeInTime);
+            else volSnare.volume.rampTo(-60, fadeOutTime);
 
 
-            // --- パターン演奏 ---
+            // --- Patterns (16 steps) ---
             
-            // 1. Kick
+            // 1. Kick (4-on-the-floor)
             if (step % 4 === 0) {
                 kick.triggerAttackRelease("C1", "8n", time);
             }
 
-            // 2. Bass
-            if (step === 0) bass.triggerAttackRelease("Eb2", "16n", time);
-            if (step === 2) bass.triggerAttackRelease("Bb2", "16n", time);
-            if (step === 3) bass.triggerAttackRelease("Eb2", "16n", time);
-            if (step === 7) bass.triggerAttackRelease("B2", "16n", time);
-            if (step === 10) bass.triggerAttackRelease("Ab2", "8n", time);
-            if (step === 14) bass.triggerAttackRelease("Bb2", "16n", time);
-
-            // 3. Hihat (8 beat Open/Closed) ★ここを変更しました
+            // 2. Hihat (16 beat pattern with Open/Closed)
+            // 偶数ステップ(0,2,4...)で鳴らす＝8分音符
             if (step % 2 === 0) {
-                // 裏拍 (2, 6, 10, 14) はオープンハイハット
+                // 裏拍の裏拍（オープンハイハット的なアクセント）
+                // ここでは、step 2, 6, 10, 14 をオープン気味にする
                 if (step % 4 === 2) {
-                    hihat.envelope.decay = 0.3; // 長く
-                    hihat.triggerAttackRelease("32n", time, 1.0); 
-                } 
-                // 表拍 (0, 4, 8, 12) はクローズハイハット
-                else {
-                    hihat.envelope.decay = 0.03; // 短く
-                    hihat.triggerAttackRelease("32n", time, 0.5); 
+                    hihat.envelope.decay = 0.3; // Open
+                    hihat.triggerAttackRelease("32n", time, 0.8);
+                } else {
+                    hihat.envelope.decay = 0.05; // Closed
+                    hihat.triggerAttackRelease("32n", time, 0.3);
                 }
             }
 
-            // 4. Clap
-            if (step === 4 || step === 12) {
-                clap.triggerAttackRelease("8n", time);
+            // 3. Bass (Driving line)
+            // C2 root
+            const bassNotes = {
+                0: "C2", 
+                3: "C2", 
+                7: "Eb2", 
+                10: "G2", 
+                14: "Bb1"
+            };
+            if (bassNotes[step]) {
+                bass.triggerAttackRelease(bassNotes[step], "16n", time);
             }
 
-            // 5. Lead
-            if ([0, 3, 6, 9, 12, 15].includes(step)) {
-                const note = currentEnergy > 0.9 ? "C6" : "C5";
-                lead.triggerAttackRelease(note, "32n", time);
+            // 4. Snare (Backbeat)
+            if (step === 4 || step === 12) {
+                snare.triggerAttackRelease("16n", time); // Noise component
+                snareEnv.triggerAttackRelease("16n", time); // Body component
             }
 
             step = (step + 1) % 16;
@@ -253,16 +330,21 @@
     }
 
     document.getElementById("playBtn").addEventListener("click", async () => {
+        // iOS 13+ DeviceMotion Permission
         if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
             try {
-                await DeviceMotionEvent.requestPermission();
+                const response = await DeviceMotionEvent.requestPermission();
+                if (response !== 'granted') alert("Motion permission required!");
             } catch (e) { console.error(e); }
         }
+        
         window.addEventListener("devicemotion", handleMotion);
+        
         await Tone.start();
         setupAudio();
         Tone.Transport.start();
-        updateParams();
+        updateVisuals();
+        
         document.getElementById("playBtn").style.display = "none";
     });
 </script>
