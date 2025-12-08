@@ -34,7 +34,6 @@ body {
     <div id="info">
         <div>BPM</div>
         <h1 id="bpmDisplay">---</h1>
-        <p>Shake device to build layers</p>
     </div>
 
     <div id="visual"></div>
@@ -46,7 +45,7 @@ body {
         </div>
         <div id="l2" class="layer">
             <div class="layer-box"></div>
-            <span class="layer-name">HIHAT</span>
+            <span class="layer-name">SNARE</span>
         </div>
         <div id="l3" class="layer">
             <div class="layer-box"></div>
@@ -54,7 +53,7 @@ body {
         </div>
         <div id="l4" class="layer">
             <div class="layer-box"></div>
-            <span class="layer-name">SNARE</span>
+            <span class="layer-name">HIHAT</span>
         </div>
     </div>
 
@@ -132,9 +131,9 @@ body {
         // レイヤー表示の切り替え
         const layers = [
             document.getElementById("l1"), // Kick
-            document.getElementById("l2"), // Hihat
+            document.getElementById("l2"), // Snare
             document.getElementById("l3"), // Bass
-            document.getElementById("l4")  // Snare
+            document.getElementById("l4")  // Hihat
         ];
         
         // しきい値設定 (0.1, 0.3, 0.6, 0.8)
@@ -216,16 +215,17 @@ body {
             else volKick.volume.rampTo(-60, fadeOutTime);
 
             // L2: Hihat (> 0.3)
-            if (currentEnergy > 0.3) volHihat.volume.rampTo(-10, fadeInTime);
-            else volHihat.volume.rampTo(-60, fadeOutTime);
+            if (currentEnergy > 0.3) volSnare.volume.rampTo(-5, fadeInTime);
+            else volSnare.volume.rampTo(-60, fadeOutTime);
 
             // L3: Bass (> 0.6)
             if (currentEnergy > 0.6) volBass.volume.rampTo(-4, fadeInTime);
             else volBass.volume.rampTo(-60, fadeOutTime);
 
             // L4: Snare (> 0.8)
-            if (currentEnergy > 0.8) volSnare.volume.rampTo(-5, fadeInTime);
-            else volSnare.volume.rampTo(-60, fadeOutTime);
+            if (currentEnergy > 0.8) volHihat.volume.rampTo(-10, fadeInTime);
+            else volHihat.volume.rampTo(-60, fadeOutTime);
+            
 
 
             // --- Patterns (16 steps) ---
