@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interactive Beat: Stages & Fills</title>
+    <title>Interactive Beat: Smooth Loop</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
 body {
@@ -51,7 +51,7 @@ body {
     opacity: 1;
 }
 
-/* Visualizer Circle */
+/* Visualizer */
 #visual {
     width: 100px;
     height: 100px;
@@ -95,7 +95,7 @@ body {
     <div class="status-container">
         <div id="stageDisplay">WAITING...</div>
         <h1 id="bpmDisplay">---</h1>
-        <div id="fillIndicator">/// FILL IN ///</div>
+        <div id="fillIndicator">/// FILL ///</div>
     </div>
 
     <div id="visual"></div>
@@ -110,234 +110,184 @@ body {
     <button id="playBtn">TAP TO START</button>
 
 <script>
-    // --- 1. System State & Config ---
-    
-    // ステージ定義 (歩行、ジョギング、ランニング)
-    const STAGES = {
-        LOW:  { name: "WALK", bpm: 110, threshold: 0 },
-        MID:  { name: "JOG",  bpm: 128, threshold: 3.5 },
-        HIGH: { name: "RUN",  bpm: 145, threshold: 7.0 }
-    };
+/* ---------------------------------------
+   1. Stage Config (BPM 110〜126)
+--------------------------------------- */
+const STAGES = {
+    LOW:  { name: "WALK", bpm: 110, threshold: 0 },
+    MID:  { name: "JOG",  bpm: 118, threshold: 3.8 },
+    HIGH: { name: "RUN",  bpm: 126, threshold: 7.2 }
+};
 
-    let currentStageKey = 'LOW'; // 現在演奏中のステージ
-    let targetStageKey = 'LOW';  // モーションが示唆している次のステージ
-    let isFilling = false;       // フィルイン演奏中フラグ
-    let currentEnergy = 0;       // ビジュアル用エナジー
+let currentStageKey = 'LOW';
+let targetStageKey = 'LOW';
+let isFilling = false;
 
-    // モーション解析用
-    let motionBuffer = [];
-    const BUFFER_SIZE = 50; 
+let motionBuffer = [];
+const BUFFER_SIZE = 50;
+let currentEnergy = 0;
 
-    // --- 2. Motion Logic ---
+/* ---------------------------------------
+   2. Motion Logic
+--------------------------------------- */
+function handleMotion(event) {
+    const g = event.accelerationIncludingGravity;
+    if (!g) return;
 
-    function handleMotion(event) {
-        const g = event.accelerationIncludingGravity;
-        if (!g) return;
-        
-        // ベクトル量（簡易計算）
-        const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
-        motionBuffer.push(mag);
-        if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
+    const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
+    motionBuffer.push(mag);
+    if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
+}
+
+function computeState() {
+    if (motionBuffer.length < BUFFER_SIZE) return;
+
+    const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
+    const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0) / motionBuffer.length;
+    const sd = Math.sqrt(variance);
+
+    let next = 'LOW';
+    if (sd > STAGES.HIGH.threshold) next = 'HIGH';
+    else if (sd > STAGES.MID.threshold) next = 'MID';
+
+    targetStageKey = next;
+
+    currentEnergy += (Math.min(sd/8, 1) - currentEnergy) * 0.1;
+}
+
+function updateVisuals() {
+    requestAnimationFrame(updateVisuals);
+    computeState();
+
+    document.getElementById("bpmDisplay").innerText = STAGES[currentStageKey].bpm;
+    document.getElementById("stageDisplay").innerText = STAGES[currentStageKey].name;
+
+    document.getElementById("fillIndicator").classList.toggle("active", isFilling);
+
+    const scale = 1.0 + currentEnergy * 0.5;
+    document.getElementById("visual").style.transform = `scale(${scale})`;
+
+    document.querySelectorAll(".layer").forEach(l => l.classList.add("active"));
+}
+
+/* ---------------------------------------
+   3. Sequencer (64 steps)
+--------------------------------------- */
+
+const STEP_COUNT = 64;  // ← 4 小節分
+
+/* 通常パターン（16stepだが内部で4回繰り返す） */
+const BASE_PAT = {
+    LOW: {
+        kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0],
+        snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        hihat: [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0],
+        bass:  [1,0,0,0, 0,0,1,0, 0,0,0,0, 1,0,0,0]
+    },
+    MID: {
+        kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,1],
+        snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        hihat: [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1],
+        bass:  [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]
+    },
+    HIGH: {
+        kick:  [1,0,1,0, 0,0,1,0, 1,0,0,1, 0,0,1,0],
+        snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0],
+        hihat: [1,1,1,1, 1,1,1,1, 1,1,1,1, 2,1,1,1],
+        bass:  [1,0,0,0, 1,0,0,0, 1,1,1,0, 1,0,0,0]
     }
+};
 
-    function computeState() {
-        if (motionBuffer.length < BUFFER_SIZE) return;
+/* フィルイン（かなり控えめ） */
+const FILL_PAT = {
+    kick:  [1,0,0,0],  // 普段通り
+    snare: [0,0,0,0],  // ほぼ無し
+    hihat: [2,1,2,1],  // 少しオープン
+    bass:  [0,0,0,0]   // 無音
+};
 
-        // 標準偏差(分散)を計算＝「揺れ」の激しさ
-        const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
-        const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0) / motionBuffer.length;
-        const sd = Math.sqrt(variance);
+let kick, snare, hihat, bass;
 
-        // SDに基づいてターゲットステージを決定 (ヒステリシス付き)
-        // 今がLOWなら、MIDの閾値を超えたらMIDへ
-        // 今がMIDなら、HIGHの閾値を超えたらHIGHへ、LOWの閾値を下回ったらLOWへ
-        
-        // 簡易ロジック: 値だけで判定
-        let next = 'LOW';
-        if (sd > STAGES.HIGH.threshold) next = 'HIGH';
-        else if (sd > STAGES.MID.threshold) next = 'MID';
-        else next = 'LOW';
+function expandPattern(p16) {
+    const full = [];
+    for (let i=0;i<64;i++) full.push(p16[i % 16]);
+    return full;
+}
 
-        // ターゲットを更新 (実際に切り替わるのは小節の変わり目)
-        targetStageKey = next;
+function setupAudio() {
+    const limiter = new Tone.Limiter(-1).toDestination();
 
-        // ビジュアル用エナジー (0~1)
-        currentEnergy += (Math.min(sd/8, 1.0) - currentEnergy) * 0.1;
-    }
+    kick = new Tone.MembraneSynth().connect(limiter);
+    snare = new Tone.NoiseSynth({ envelope:{ decay:0.15 }}).connect(limiter);
+    hihat = new Tone.NoiseSynth({ envelope:{ decay:0.05 }}).connect(limiter);
+    bass = new Tone.MonoSynth().connect(limiter);
 
-    function updateVisuals() {
-        requestAnimationFrame(updateVisuals);
-        computeState();
+    let step = 0;
 
-        // テキスト更新
-        document.getElementById("bpmDisplay").innerText = STAGES[currentStageKey].bpm;
-        document.getElementById("stageDisplay").innerText = STAGES[currentStageKey].name;
-        
-        const fillEl = document.getElementById("fillIndicator");
-        if (isFilling) fillEl.classList.add("active");
-        else fillEl.classList.remove("active");
+    Tone.Transport.scheduleRepeat((time)=>{
+        const isBlockHead = (step === 0);
 
-        // ビジュアルの鼓動 (Kickのタイミングで跳ねさせるのはCSS Animationでも良いが、簡易的にここで)
-        const scale = 1.0 + currentEnergy * 0.5;
-        document.getElementById("visual").style.transform = `scale(${scale})`;
-
-        // レイヤーUI (今のロジックでは全レイヤー常時ONに近いが、演出として残す)
-        // Highに行くと全開、LowだとBass/Snareを少し控えめにするなどの演出が可能
-        // ここでは単純にステージごとにアクティブ表示を変える
-        const layers = document.querySelectorAll(".layer");
-        layers.forEach(l => l.classList.add("active")); 
-    }
-
-    // --- 3. Sound Design & Sequencer ---
-    
-    let kick, bass, snare, hihat;
-    let volKick, volBass, volSnare, volHihat;
-
-    // パターンデータ (16ステップ)
-    // 1: Trigger, 0: Silence, 2: Accent/Open
-    const PATTERNS = {
-        LOW: {
-            kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0], // 4つ打ち
-            snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], // シンプル
-            hihat: [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0], // 8分
-            bass:  [1,0,0,0, 0,0,1,0, 0,0,0,0, 1,0,0,0]  // ルート弾き
-        },
-        MID: {
-            kick:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,1], // 少しドライブ感
-            snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], 
-            hihat: [1,1,1,1, 1,1,1,1, 1,1,1,1, 2,1,1,1], // 16分
-            bass:  [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,1,0]  // オクターブベース的
-        },
-        HIGH: {
-            kick:  [1,0,1,0, 0,0,1,0, 1,0,0,1, 0,0,1,0], // Breakbeat / DnB風
-            snare: [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0], 
-            hihat: [1,1,1,1, 2,1,1,1, 1,1,1,1, 2,1,2,1], 
-            bass:  [1,0,0,0, 1,0,0,0, 1,1,1,0, 1,0,0,0]  // うねるベース
-        }
-    };
-
-    // フィルインパターン (共通)
-    const FILL_PATTERN = {
-        kick:  [1,0,1,0, 1,0,1,0, 1,0,1,0, 1,0,0,0],
-        snare: [0,0,0,0, 1,0,0,0, 1,1,1,1, 1,1,1,1], // 最後ロール
-        hihat: [2,2,2,2, 2,2,2,2, 2,2,2,2, 0,0,0,0], // オープン連打
-        bass:  [1,0,0,0, 1,0,0,0, 1,0,0,0, 0,0,0,0]  // ブレイク
-    };
-
-    function setupAudio() {
-        const masterLimiter = new Tone.Limiter(-1).toDestination();
-
-        // Instruments (前回と同じ設定)
-        kick = new Tone.MembraneSynth().connect(masterLimiter);
-        
-        hihat = new Tone.NoiseSynth({ noise: { type: "white" }, envelope: { decay: 0.1 } });
-        const hhFilter = new Tone.Filter(8000, "highpass").connect(masterLimiter);
-        hihat.connect(hhFilter);
-
-        bass = new Tone.MonoSynth({
-            oscillator: { type: "sawtooth" },
-            filter: { Q: 2, type: "lowpass", rollover: -12 },
-            envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.4 },
-            filterEnvelope: { baseFrequency: 100, octaves: 3 }
-        }).connect(masterLimiter);
-
-        snare = new Tone.NoiseSynth({ noise: { type: "pink" }, envelope: { decay: 0.2 } }).connect(masterLimiter);
-        
-        // Volumes
-        volKick = new Tone.Volume(-6).connect(masterLimiter); kick.connect(volKick);
-        volBass = new Tone.Volume(-6).connect(masterLimiter); bass.connect(volBass);
-
-        // シーケンサーロジック
-        let step = 0;
-
-        Tone.Transport.scheduleRepeat((time) => {
-            
-            // --- 小節の頭 (Step 0) での状態遷移判定 ---
-            if (step === 0) {
-                // もし「フィル中」だったなら、フィルが終わったので新しいステージへ移行
-                if (isFilling) {
-                    isFilling = false;
-                    currentStageKey = targetStageKey; // ここでステージ確定
-                    // BPM変更 (ランプなしで即座に変えるのがDJ的)
-                    Tone.Transport.bpm.value = STAGES[currentStageKey].bpm; 
-                }
-                // もしターゲットが変わっていたら、次の小節は「フィル」モードにする
-                else if (targetStageKey !== currentStageKey) {
-                    isFilling = true;
-                }
-            }
-
-            // --- パターン選択 ---
-            let currentPat;
+        if (isBlockHead) {
             if (isFilling) {
-                currentPat = FILL_PATTERN;
-            } else {
-                currentPat = PATTERNS[currentStageKey];
+                isFilling = false;
+                currentStageKey = targetStageKey;
+                Tone.Transport.bpm.value = STAGES[currentStageKey].bpm;
             }
-
-            // --- 再生処理 ---
-            
-            // Kick
-            if (currentPat.kick[step]) {
-                kick.triggerAttackRelease("C1", "8n", time);
-                // ビジュアルの鼓動トリガー
-                Tone.Draw.schedule(() => {
-                    const v = document.getElementById("visual");
-                    v.style.transform = "scale(1.4)";
-                    setTimeout(()=> v.style.transform = "scale(1.0)", 100);
-                }, time);
+            else if (targetStageKey !== currentStageKey) {
+                isFilling = true;
             }
+        }
 
-            // Snare
-            if (currentPat.snare[step]) {
-                snare.triggerAttackRelease("16n", time);
-            }
+        let pat;
+        if (isFilling) {
+            pat = {
+                kick: expandPattern(FILL_PAT.kick),
+                snare: expandPattern(FILL_PAT.snare),
+                hihat: expandPattern(FILL_PAT.hihat),
+                bass: expandPattern(FILL_PAT.bass)
+            };
+        } else {
+            const base = BASE_PAT[currentStageKey];
+            pat = {
+                kick: expandPattern(base.kick),
+                snare: expandPattern(base.snare),
+                hihat: expandPattern(base.hihat),
+                bass: expandPattern(base.bass)
+            };
+        }
 
-            // Hihat
-            if (currentPat.hihat[step] === 1) {
-                hihat.envelope.decay = 0.05; // Closed
-                hihat.triggerAttackRelease("32n", time, 0.3);
-            } else if (currentPat.hihat[step] === 2) {
-                hihat.envelope.decay = 0.3; // Open
-                hihat.triggerAttackRelease("32n", time, 0.8);
-            }
+        if (pat.kick[step])     kick.triggerAttackRelease("C1","8n",time);
+        if (pat.snare[step])    snare.triggerAttackRelease("16n",time);
+        if (pat.hihat[step])    hihat.triggerAttackRelease("32n",time, pat.hihat[step]===2 ? 0.5 : 0.2);
+        if (pat.bass[step])     bass.triggerAttackRelease("C2","16n",time);
 
-            // Bass (Patternに応じてノートを変える簡易実装)
-            if (currentPat.bass[step]) {
-                // ステージによってベースラインの雰囲気を変える
-                let note = "C2";
-                if (currentStageKey === 'HIGH') note = (step < 8) ? "C2" : "F2"; 
-                if (currentStageKey === 'MID') note = (step % 4 === 0) ? "C2" : "C3"; 
+        step = (step+1) % STEP_COUNT;
 
-                bass.triggerAttackRelease(note, "16n", time);
-            }
+    }, "16n");
+}
 
-            step = (step + 1) % 16;
-
-        }, "16n");
+/* ---------------------------------------
+   Start
+--------------------------------------- */
+document.getElementById("playBtn").addEventListener("click", async ()=>{
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== "granted") alert("Motion permission required!");
     }
 
-    document.getElementById("playBtn").addEventListener("click", async () => {
-        // iOS Permission
-        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-            try {
-                const response = await DeviceMotionEvent.requestPermission();
-                if (response !== 'granted') alert("Motion permission required!");
-            } catch (e) { console.error(e); }
-        }
-        
-        window.addEventListener("devicemotion", handleMotion);
-        
-        await Tone.start();
-        setupAudio();
-        
-        // 初期BPM設定
-        Tone.Transport.bpm.value = STAGES.LOW.bpm;
-        Tone.Transport.start();
-        
-        updateVisuals();
-        document.getElementById("playBtn").style.display = "none";
-    });
+    window.addEventListener("devicemotion", handleMotion);
+
+    await Tone.start();
+    setupAudio();
+
+    Tone.Transport.bpm.value = STAGES.LOW.bpm;
+    Tone.Transport.start();
+
+    updateVisuals();
+    document.getElementById("playBtn").style.display = "none";
+});
 </script>
+
 </body>
 </html>
