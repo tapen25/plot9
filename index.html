@@ -93,8 +93,19 @@ body {
         // SDが小さい(静止)と0に近く、激しく振ると5~10くらいになる想定
         
         // BPM: 揺れに応じて 100 ~ 160 の間で変動
-        let rawBPM = 100 + (sd * 12); 
-        targetBPM = Math.max(100, Math.min(160, rawBPM));
+        //let rawBPM = 100 + (sd * 12); 
+        //targetBPM = Math.max(100, Math.min(160, rawBPM));
+        // --- BPM を段階的に決定 ---
+        let bpmSet = 110;
+
+        if (sd < 1.5) bpmSet = 110;
+        else if (sd < 3.0) bpmSet = 114;
+        else if (sd < 4.5) bpmSet = 120;
+        else if (sd < 6.0) bpmSet = 126;
+        else bpmSet = 130;
+
+        targetBPM = bpmSet;
+
 
         // Energy: 0.0 ~ 1.0 (レイヤーの解放レベル)
         // 感度調整: sdが 6.0 を超えたらMAXになるように設定
