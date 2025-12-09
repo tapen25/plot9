@@ -5,66 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interactive Beat: Layers</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.12.0/NoSleep.min.js"></script>
-    
     <style>
-        body {
-            font-family: sans-serif;
-            text-align: center;
-            padding-top: 40px;
-            /* スクロール防止（誤操作防止） */
-            touch-action: none; 
-            background-color: #f0f0f0;
-            transition: background-color 0.5s;
-        }
-        #playBtn {
-            padding: 15px 30px;
-            font-size: 1.2rem;
-            cursor: pointer;
-        }
-        .layer-container {
-            display: flex;
-            justify-content: center;
-            gap: 10px;
-            margin-top: 20px;
-        }
-        .layer {
-            opacity: 0.3;
-            transition: opacity 0.2s;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .layer-box {
-            width: 50px;
-            height: 50px;
-            background: #333;
-            margin-bottom: 5px;
-            border-radius: 4px;
-        }
-        .layer.active {
-            opacity: 1;
-        }
-        .layer.active .layer-box {
-            background: #ff5500;
-            box-shadow: 0 0 10px #ff5500;
-        }
-        #visual {
-            width: 100px;
-            height: 100px;
-            background-color: #333;
-            border-radius: 50%;
-            margin: 20px auto;
-            transition: transform 0.1s;
-        }
-    </style>
+body {
+    font-family: sans-serif;
+    text-align: center;
+    padding-top: 40px;
+}
+#playBtn {
+    padding: 10px 20px;
+}
+.layer-container {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 20px;
+}
+.layer {
+    opacity: 0.3;
+}
+.layer.active {
+    opacity: 1;
+}
+</style>
+
 </head>
 <body>
 
     <div id="info">
         <div>BPM</div>
         <h1 id="bpmDisplay">---</h1>
-        
     </div>
 
     <div id="visual"></div>
@@ -92,22 +61,20 @@
     <button id="playBtn">TAP TO START</button>
 
 <script>
-    // --- NoSleep Setup ---
-    // 画面が消えないようにするためのインスタンスを作成
-    const noSleep = new NoSleep();
-
     // --- Motion Logic ---
     let motionBuffer = [];
     const BUFFER_SIZE = 40; 
     let currentBPM = 100;
     let targetBPM = 100;
-    let currentEnergy = 0; 
+    let currentEnergy = 0; // 0.0 to 1.0
     let targetEnergy = 0;
 
     function handleMotion(event) {
         const g = event.accelerationIncludingGravity;
         if (!g) return;
         
+        // 重力込みの加速度から変化量を簡易的に取得
+        // ※ 本来はハイパスフィルタなどを通すが、簡易的にベクトルの大きさで判定
         const mag = Math.sqrt((g.x||0)**2 + (g.y||0)**2 + (g.z||0)**2);
         motionBuffer.push(mag);
         if (motionBuffer.length > BUFFER_SIZE) motionBuffer.shift();
@@ -116,11 +83,20 @@
     function computeState() {
         if (motionBuffer.length < BUFFER_SIZE) return;
 
+        // 標準偏差(分散)を計算＝「揺れ」の激しさ
         const mean = motionBuffer.reduce((a,b)=>a+b,0) / motionBuffer.length;
         const variance = motionBuffer.reduce((a,b)=>a+(b-mean)**2,0) / motionBuffer.length;
         const sd = Math.sqrt(variance);
 
+        // --- パラメータ調整 ---
+        // SDが小さい(静止)と0に近く、激しく振ると5~10くらいになる想定
+        
+        // BPM: 揺れに応じて 100 ~ 160 の間で変動
+        //let rawBPM = 100 + (sd * 12); 
+        //targetBPM = Math.max(100, Math.min(160, rawBPM));
+        // --- BPM を段階的に決定 ---
         let bpmSet = 110;
+
         if (sd < 1.5) bpmSet = 110;
         else if (sd < 3.0) bpmSet = 114;
         else if (sd < 4.5) bpmSet = 120;
@@ -128,6 +104,10 @@
         else bpmSet = 130;
 
         targetBPM = bpmSet;
+
+
+        // Energy: 0.0 ~ 1.0 (レイヤーの解放レベル)
+        // 感度調整: sdが 6.0 を超えたらMAXになるように設定
         targetEnergy = Math.min(sd / 6.0, 1.0);
     }
 
@@ -135,22 +115,28 @@
         requestAnimationFrame(updateVisuals);
         computeState();
 
+        // 値をスムージングして急激な変化を抑える
         currentBPM += (targetBPM - currentBPM) * 0.01;
         Tone.Transport.bpm.value = currentBPM;
+
         currentEnergy += (targetEnergy - currentEnergy) * 0.008;
 
+        // 表示更新
         document.getElementById("bpmDisplay").innerText = currentBPM.toFixed(0);
         
+        // ビジュアルの鼓動
         const scale = 0.8 + currentEnergy * 1.5;
         document.getElementById("visual").style.transform = `scale(${scale})`;
 
+        // レイヤー表示の切り替え
         const layers = [
-            document.getElementById("l1"),
-            document.getElementById("l2"),
-            document.getElementById("l3"),
-            document.getElementById("l4") 
+            document.getElementById("l1"), // Kick
+            document.getElementById("l2"), // Snare
+            document.getElementById("l3"), // Bass
+            document.getElementById("l4")  // Hihat
         ];
         
+        // しきい値設定 (0.1, 0.3, 0.6, 0.8)
         const thresholds = [0.05, 0.3, 0.6, 0.8];
         
         layers.forEach((el, i) => {
@@ -166,7 +152,7 @@
     function setupAudio() {
         const masterLimiter = new Tone.Limiter(-2).toDestination();
 
-        // 1. KICK
+        // 1. KICK (Deep & Punchy)
         kick = new Tone.MembraneSynth({
             pitchDecay: 0.05,
             octaves: 6,
@@ -176,7 +162,7 @@
         volKick = new Tone.Volume(-60).connect(masterLimiter);
         kick.disconnect(); kick.connect(volKick);
 
-        // 2. HIHAT
+        // 2. HIHAT (Noise with filtering)
         hihat = new Tone.NoiseSynth({
             noise: { type: "white" },
             envelope: { attack: 0.001, decay: 0.1, sustain: 0 }
@@ -185,7 +171,7 @@
         volHihat = new Tone.Volume(-60).connect(hhFilter);
         hihat.disconnect(); hihat.connect(volHihat);
 
-        // 3. BASS
+        // 3. BASS (Fat MonoSynth)
         bass = new Tone.MonoSynth({
             oscillator: { type: "sawtooth" },
             filter: { Q: 2, type: "lowpass", rollover: -12 },
@@ -195,13 +181,15 @@
         volBass = new Tone.Volume(-60).connect(masterLimiter);
         bass.disconnect(); bass.connect(volBass);
 
-        // 4. SNARE
+        // 4. SNARE (Sharp & Noisy)
         snare = new Tone.NoiseSynth({
             noise: { type: "pink" },
             envelope: { attack: 0.001, decay: 0.25, sustain: 0 }
         });
+        // スネアに少しトーン（Body）を足すためのOscillator
         const snareTone = new Tone.Oscillator({
-            frequency: 200, type: "triangle",
+            frequency: 200,
+            type: "triangle",
         }).start();
         const snareEnv = new Tone.AmplitudeEnvelope({
             attack: 0.001, decay: 0.1, sustain: 0
@@ -210,47 +198,74 @@
 
         volSnare = new Tone.Volume(-60).connect(masterLimiter);
         snare.disconnect(); snare.connect(volSnare);
-        snareEnv.disconnect(); snareEnv.connect(volSnare);
+        snareEnv.disconnect(); snareEnv.connect(volSnare); // BodyとNoiseをまとめる
+
 
         // --- Sequencer Loop ---
         let step = 0;
         
         Tone.Transport.scheduleRepeat((time) => {
+            // Volume Control (Smooth fade in/out based on thresholds)
+            // しきい値を超えたら音量を上げ、下回ったら下げる
             const fadeInTime = 0.1;
             const fadeOutTime = 0.5;
 
-            // Volume Logic
+            // L1: Kick (> 0.05)
             if (currentEnergy > 0.05) volKick.volume.rampTo(0, fadeInTime);
             else volKick.volume.rampTo(-60, fadeOutTime);
 
+            // L2: Hihat (> 0.3)
             if (currentEnergy > 0.3) volSnare.volume.rampTo(-5, fadeInTime);
             else volSnare.volume.rampTo(-60, fadeOutTime);
 
+            // L3: Bass (> 0.6)
             if (currentEnergy > 0.6) volBass.volume.rampTo(-4, fadeInTime);
             else volBass.volume.rampTo(-60, fadeOutTime);
 
+            // L4: Snare (> 0.8)
             if (currentEnergy > 0.8) volHihat.volume.rampTo(-10, fadeInTime);
             else volHihat.volume.rampTo(-60, fadeOutTime);
             
-            // Patterns
-            if (step % 4 === 0) kick.triggerAttackRelease("C1", "8n", time);
 
+
+            // --- Patterns (16 steps) ---
+            
+            // 1. Kick (4-on-the-floor)
+            if (step % 4 === 0) {
+                kick.triggerAttackRelease("C1", "8n", time);
+            }
+
+            // 2. Hihat (16 beat pattern with Open/Closed)
+            // 偶数ステップ(0,2,4...)で鳴らす＝8分音符
             if (step % 2 === 0) {
+                // 裏拍の裏拍（オープンハイハット的なアクセント）
+                // ここでは、step 2, 6, 10, 14 をオープン気味にする
                 if (step % 4 === 2) {
-                    hihat.envelope.decay = 0.3; 
+                    hihat.envelope.decay = 0.3; // Open
                     hihat.triggerAttackRelease("32n", time, 0.8);
                 } else {
-                    hihat.envelope.decay = 0.05; 
+                    hihat.envelope.decay = 0.05; // Closed
                     hihat.triggerAttackRelease("32n", time, 0.3);
                 }
             }
 
-            const bassNotes = { 0: "C2", 3: "C2", 7: "Eb2", 10: "G2", 14: "Bb1" };
-            if (bassNotes[step]) bass.triggerAttackRelease(bassNotes[step], "16n", time);
+            // 3. Bass (Driving line)
+            // C2 root
+            const bassNotes = {
+                0: "C2", 
+                3: "C2", 
+                7: "Eb2", 
+                10: "G2", 
+                14: "Bb1"
+            };
+            if (bassNotes[step]) {
+                bass.triggerAttackRelease(bassNotes[step], "16n", time);
+            }
 
+            // 4. Snare (Backbeat)
             if (step === 4 || step === 12) {
-                snare.triggerAttackRelease("16n", time); 
-                snareEnv.triggerAttackRelease("16n", time); 
+                snare.triggerAttackRelease("16n", time); // Noise component
+                snareEnv.triggerAttackRelease("16n", time); // Body component
             }
 
             step = (step + 1) % 16;
@@ -258,16 +273,7 @@
     }
 
     document.getElementById("playBtn").addEventListener("click", async () => {
-        // --- 修正箇所: NoSleepの有効化 ---
-        // ユーザーインタラクション（クリック）の中で呼ぶ必要があります
-        try {
-            await noSleep.enable();
-            console.log("Wake Lock enabled (Screen will stay on)");
-        } catch (err) {
-            console.error("Wake Lock failed:", err);
-        }
-
-        // iOS Motion Permission
+        // iOS 13+ DeviceMotion Permission
         if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
             try {
                 const response = await DeviceMotionEvent.requestPermission();
@@ -282,11 +288,7 @@
         Tone.Transport.start();
         updateVisuals();
         
-        const btn = document.getElementById("playBtn");
-        btn.innerText = "PLAYING...";
-        btn.style.opacity = 0.5;
-        // ボタンを消さずに残しておいても良い（リロード用など）ですが、
-        // 誤操作防止のため無効化的な見た目にしています
+        document.getElementById("playBtn").style.display = "none";
     });
 </script>
 </body>
