@@ -49,11 +49,11 @@ body {
         </div>
         <div id="l3" class="layer">
             <div class="layer-box"></div>
-            <span class="layer-name">BASS</span>
+            <span class="layer-name">HIHAT</span>
         </div>
         <div id="l4" class="layer">
             <div class="layer-box"></div>
-            <span class="layer-name">HIHAT</span>
+            <span class="layer-name">BASS</span>
         </div>
     </div>
 
@@ -132,8 +132,8 @@ body {
         const layers = [
             document.getElementById("l1"), // Kick
             document.getElementById("l2"), // Snare
-            document.getElementById("l3"), // Bass
-            document.getElementById("l4")  // Hihat
+            document.getElementById("l3"), // Hihat
+            document.getElementById("l4")  // Bass
         ];
         
         // しきい値設定 (0.1, 0.3, 0.6, 0.8)
@@ -219,17 +219,14 @@ body {
             else volSnare.volume.rampTo(-60, fadeOutTime);
 
             // L3: Bass (> 0.6)
-            if (currentEnergy > 0.6) volBass.volume.rampTo(-4, fadeInTime);
-            else volBass.volume.rampTo(-60, fadeOutTime);
+            if (currentEnergy > 0.6)volHihat.volume.rampTo(-10, fadeInTime);
+            else volHihat.volume.rampTo(-60, fadeOutTime); 
 
             // L4: Snare (> 0.8)
-            if (currentEnergy > 0.8) volHihat.volume.rampTo(-10, fadeInTime);
-            else volHihat.volume.rampTo(-60, fadeOutTime);
-            
-
-
+            if (currentEnergy > 0.8)volBass.volume.rampTo(-4, fadeInTime);
+            else volBass.volume.rampTo(-60, fadeOutTime);
+          
             // --- Patterns (16 steps) ---
-            
             // 1. Kick (4-on-the-floor)
             if (step % 4 === 0) {
                 kick.triggerAttackRelease("C1", "8n", time);
